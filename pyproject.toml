@@ -1,0 +1,19 @@
+[project]
+name = "a2"
+version = "0.1.0"
+description = "representation learning"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch==2.5.0"
+]
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cuda" }]
+torchvision = [{ index = "pytorch-cuda" }]
+torchaudio = [{ index = "pytorch-cuda" }]
