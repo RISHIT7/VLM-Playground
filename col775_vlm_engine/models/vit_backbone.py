@@ -2,42 +2,7 @@ import torch
 import torch.nn as nn
 import math
 
-class TransformerBlock(nn.Module):
-    def __init__(self, embed_dim: int = 384, num_heads: int = 6, mlp_dim: int = 1536):
-        """
-        API Description:
-        Initializes a single Transformer block (Pre-Norm architecture).
-        
-        Args:
-            embed_dim: Dimension of the input and output embeddings.
-            num_heads: Number of attention heads.
-            mlp_dim: Dimension of the MLP hidden layer.
-        """
-        super().__init__()
-        self.norm1 = nn.LayerNorm(embed_dim)
-        self.self_attention = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
-        self.norm2 = nn.LayerNorm(embed_dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(embed_dim, mlp_dim),
-            nn.GELU(),
-            nn.Linear(mlp_dim, embed_dim)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        API Description:
-        Executes the forward pass of a single Transformer block.
-        
-        Args:
-            x: FloatTensor of shape (B, N, D) representing a batch of token embeddings.
-            
-        Returns:
-            FloatTensor of shape (B, N, D) representing the output embeddings after passing through the Transformer block.
-        """
-        x = x + self.self_attention(self.norm1(x), self.norm1(x), self.norm1(x))[0]
-        x = x + self.mlp(self.norm2(x))
-        return x
-        
+from transformer_block import TransformerBlock
 
 class VisionTransformer(nn.Module):
     def __init__(self, img_size: int = 224, patch_size: int = 16, embed_dim: int = 384, depth: int = 12, num_heads: int = 6, mlp_dim: int = 1536):
@@ -59,7 +24,7 @@ class VisionTransformer(nn.Module):
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         self.pos_embedding = nn.Parameter(torch.zeros(1, self.num_patches + 1, embed_dim)) # (1, num_patches + 1, embed_dim)
         
-        self.transformer_blocks = nn.ModuleList([TransformerBlock(embed_dim, num_heads, mlp_dim) for _ in range(depth)])
+        self.transformer_blocks = nn.ModuleList([TransformerBlock(embed_dim, num_heads, mlp_dim, non_linearity="gelu") for _ in range(depth)])
         self.norm = nn.LayerNorm(embed_dim)
 
         self._init_weights()
