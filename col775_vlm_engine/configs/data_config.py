@@ -13,7 +13,18 @@ class EnvConfig:
     drop_last: bool = False
 
 def get_config(env: str = "local") -> EnvConfig:
-    if env == "local":
+    if env == "local_mac":
+        return EnvConfig(
+            env_name="local",
+            base_dir_part_a="../../data/A2_dataset/Part_A",
+            base_dir_part_aa="../../data/A2_dataset/Part_Aa",
+            batch_size=4,
+            num_workers=0,
+            pin_memory=False,
+            prefetch_factor=None,
+            drop_last=False,
+        )
+    elif env == "local_omen":
         return EnvConfig(
             env_name="local",
             base_dir_part_a="data/Part_A",        # change to actual path
