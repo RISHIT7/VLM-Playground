@@ -10,6 +10,7 @@ class EnvConfig:
     num_workers: int
     pin_memory: bool
     prefetch_factor: Optional[int] = None
+    drop_last: bool = False
 
 def get_config(env: str = "local") -> EnvConfig:
     if env == "local":
@@ -21,6 +22,7 @@ def get_config(env: str = "local") -> EnvConfig:
             num_workers=0,
             pin_memory=False,
             prefetch_factor=None,
+            drop_last=False,
         )
     elif env == "kaggle":
         return EnvConfig(
@@ -31,6 +33,7 @@ def get_config(env: str = "local") -> EnvConfig:
             num_workers=2,
             pin_memory=True,
             prefetch_factor=2,
+            drop_last=False,
         )
     elif env == "hpc":
         # Update these paths to match your HPC scratch space
@@ -42,6 +45,7 @@ def get_config(env: str = "local") -> EnvConfig:
             num_workers=8,
             pin_memory=True,
             prefetch_factor=2,
+            drop_last=True,
         )
     else:
         raise ValueError(f"Unknown environment: {env}")
