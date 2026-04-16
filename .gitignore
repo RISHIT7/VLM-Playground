@@ -206,8 +206,12 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-
 Dataset
 .DS_Store
 dump/
 data/*
+
+/data/A2_dataset
+.DS_Store
+
+/dump
