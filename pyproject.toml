@@ -5,7 +5,12 @@ description = "representation learning"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "torch==2.5.0"
+    "numpy>=2.2.6",
+    "pillow>=12.2.0",
+    "scikit-learn>=1.7.2",
+    "torch==2.5.0",
+    "tqdm>=4.67.3",
+    "wandb>=0.26.0",
 ]
 
 [[tool.uv.index]]
