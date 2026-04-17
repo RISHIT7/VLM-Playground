@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
+from pathlib import Path
+import os
 
 @dataclass
 class EnvConfig:
@@ -13,11 +15,15 @@ class EnvConfig:
     drop_last: bool = False
 
 def get_config(env: str = "local") -> EnvConfig:
+    file_path = os.path.abspath(__file__)
     if env == "local_mac":
+        # check kr lena bhai, I'm not sure what the exact path will be on your machine, but it should be something like this:
+        part_a_path = Path(file_path).parent.parent / "data" / "A2_dataset" / "Part_A"
+        part_aa_path = Path(file_path).parent.parent / "data" / "A2_dataset" / "Part_Aa"
         return EnvConfig(
             env_name="local",
-            base_dir_part_a="../../data/A2_dataset/Part_A",
-            base_dir_part_aa="../../data/A2_dataset/Part_Aa",
+            base_dir_part_a=str(part_a_path),
+            base_dir_part_aa=str(part_aa_path),
             batch_size=4,
             num_workers=0,
             pin_memory=False,
@@ -25,10 +31,12 @@ def get_config(env: str = "local") -> EnvConfig:
             drop_last=False,
         )
     elif env == "local_omen":
+        part_a_path = Path(file_path).parent.parent.parent / "Dataset" / "Part_A"
+        part_aa_path = Path(file_path).parent.parent.parent / "Dataset" / "Part_Aa"
         return EnvConfig(
             env_name="local",
-            base_dir_part_a="data/Part_A",        # change to actual path
-            base_dir_part_aa="data/Part_Aa",      # change to actual path
+            base_dir_part_a=str(part_a_path),
+            base_dir_part_aa=str(part_aa_path),
             batch_size=4,
             num_workers=0,
             pin_memory=False,
