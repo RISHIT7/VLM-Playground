@@ -18,6 +18,7 @@ dependencies = [
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "torch" },
+    { name = "torchvision" },
     { name = "tqdm" },
     { name = "wandb" },
 ]
@@ -28,6 +29,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "scikit-learn", specifier = ">=1.7.2" },
     { name = "torch", specifier = "==2.5.0", index = "https://download.pytorch.org/whl/cu118" },
+    { name = "torchvision", specifier = ">=0.20.0", index = "https://download.pytorch.org/whl/cu118" },
     { name = "tqdm", specifier = ">=4.67.3" },
     { name = "wandb", specifier = ">=0.26.0" },
 ]
@@ -1280,6 +1282,25 @@ wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu118/torch-2.5.0%2Bcu118-cp312-cp312-linux_x86_64.whl", hash = "sha256:4fb215ca92e340da55eb6e309c4ccf301159bbdab0bad88e20e6b507905acc7c" },
     { url = "https://download-r2.pytorch.org/whl/cu118/torch-2.5.0%2Bcu118-cp312-cp312-win_amd64.whl", hash = "sha256:fd9541dce6bd704b83172b688fdec01fa700edd3e7b4e2a20a83e05666c69ac4" },
     { url = "https://download-r2.pytorch.org/whl/cu118/torch-2.5.0%2Bcu118-cp313-cp313-linux_x86_64.whl", hash = "sha256:1b547519a1c7145c7a4613b9bb361312be53cdcfc35ce4c179f62590e4761876" },
+]
+
+[[package]]
+name = "torchvision"
+version = "0.20.0+cu118"
+source = { registry = "https://download.pytorch.org/whl/cu118" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pillow" },
+    { name = "torch" },
+]
+wheels = [
+    { url = "https://download-r2.pytorch.org/whl/cu118/torchvision-0.20.0%2Bcu118-cp310-cp310-linux_x86_64.whl", hash = "sha256:fb9fc996379685d59148bf488c2c357f5e15da13c7039b4cc212df94f395f4e2" },
+    { url = "https://download-r2.pytorch.org/whl/cu118/torchvision-0.20.0%2Bcu118-cp310-cp310-win_amd64.whl", hash = "sha256:161e7380e7f44a575a4b2ff847df23ccd11636e35571b032e94f8f12ad69397f" },
+    { url = "https://download-r2.pytorch.org/whl/cu118/torchvision-0.20.0%2Bcu118-cp311-cp311-linux_x86_64.whl", hash = "sha256:e9a96647082bd13693e6c556c22fb4ce695c33e34d535458a90dc828b8b9f8f8" },
+    { url = "https://download-r2.pytorch.org/whl/cu118/torchvision-0.20.0%2Bcu118-cp311-cp311-win_amd64.whl", hash = "sha256:1ec0b7701b74c267fa456f0ef86d9469f2fe2c0c06d046002b516c8cb1581fcd" },
+    { url = "https://download-r2.pytorch.org/whl/cu118/torchvision-0.20.0%2Bcu118-cp312-cp312-linux_x86_64.whl", hash = "sha256:2cb6b6e83e6c22fe1928645ca2c0d8524276cdfc93d500f4a632a2bfc9feff11" },
+    { url = "https://download-r2.pytorch.org/whl/cu118/torchvision-0.20.0%2Bcu118-cp312-cp312-win_amd64.whl", hash = "sha256:f41dce6956351715965afae752d0dbbb122cb75d470143b86046599137935a25" },
 ]
 
 [[package]]
