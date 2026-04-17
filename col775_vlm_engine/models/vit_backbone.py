@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import math
 
-from transformer_block import TransformerBlock
+from .transformer_block import TransformerBlock
 
 class VisionTransformer(nn.Module):
     def __init__(self, img_size: int = 224, patch_size: int = 16, embed_dim: int = 384, depth: int = 12, num_heads: int = 6, mlp_dim: int = 1536):

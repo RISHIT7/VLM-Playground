@@ -1,7 +1,7 @@
 import torch
 import math
 import torch.nn as nn
-from transformer_block import TransformerBlock
+from .transformer_block import TransformerBlock
 
 class TextEncoder(nn.Module):
     def __init__(self, vocab_size: int, embed_dim: int = 384, depth: int = 6, num_heads: int = 6, mlp_dim: int = 1536, max_len: int=77):
