@@ -23,6 +23,7 @@ from utils.optimization import (
     cosine_schedule,
 )
 from utils.wandb_logger import WandbLogger
+from utils.grad_hooks import compute_grad_metrics, dino_model_groups, dino_diagnostic_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -308,7 +309,16 @@ def train_dino(cfg: DINOTrainConfig) -> None:
             )
             loss.backward()
 
-            nn.utils.clip_grad_norm_(model.student_network.parameters(), max_norm=3.0)
+            # ── Capture pre-clip gradient metrics ──
+            grad_metrics = {}
+            should_log = ((global_step + 1) % cfg.log_every_n_steps == 0)
+            if should_log:
+                groups = dino_model_groups(model)
+                grad_metrics = compute_grad_metrics(groups)
+
+            clip_norm = nn.utils.clip_grad_norm_(model.student_network.parameters(), max_norm=3.0)
+            if should_log:
+                grad_metrics["grad_norm/post_clip"] = clip_norm.item()
 
             optimizer.step()
             scheduler.step()  # step-level
@@ -316,6 +326,10 @@ def train_dino(cfg: DINOTrainConfig) -> None:
             # EMA updates (must happen AFTER the gradient step)
             model.update_teacher(momentum=teacher_momentum)
             model.update_center(teacher_out)
+
+            # ── DINO-specific diagnostics (center + teacher-student divergence) ──
+            if should_log:
+                grad_metrics.update(dino_diagnostic_metrics(model))
 
             loss_val = loss.item()
             current_lr = scheduler.get_last_lr()[0]
@@ -330,15 +344,15 @@ def train_dino(cfg: DINOTrainConfig) -> None:
             )
 
             if global_step % cfg.log_every_n_steps == 0:
-                wandb_logger.log_metrics(
-                    {
-                        "train/loss": loss_val,
-                        "train/lr": current_lr,
-                        "train/teacher_momentum": teacher_momentum,
-                        "train/teacher_temp": teacher_temp,
-                    },
-                    step=global_step,
-                )
+                log_payload = {
+                    "train/loss": loss_val,
+                    "train/lr": current_lr,
+                    "train/teacher_momentum": teacher_momentum,
+                    "train/teacher_temp": teacher_temp,
+                    "train/effective_update": current_lr * grad_metrics.get("grad_norm/total", 0.0),
+                }
+                log_payload.update(grad_metrics)
+                wandb_logger.log_metrics(log_payload, step=global_step)
 
         avg_train_loss = epoch_loss / max(1, n_train_steps)
 

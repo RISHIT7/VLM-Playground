@@ -20,6 +20,7 @@ from models.vit_backbone import VisionTransformer
 from models.text_encoder import TextEncoder
 from utils.optimization import build_optimizer, build_cosine_warmup_scheduler
 from utils.wandb_logger import WandbLogger
+from utils.grad_hooks import compute_grad_metrics, clip_model_groups, clip_scalar_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -289,8 +290,18 @@ def train_clip(cfg: CLIPTrainConfig) -> None:
             loss = model.compute_loss(img_feat, txt_feat, captions)
             loss.backward()
 
+            # ── Capture pre-clip gradient metrics ──
+            grad_metrics = {}
+            should_log = ((global_step + 1) % cfg.log_every_n_steps == 0)
+            if should_log:
+                groups = clip_model_groups(model)
+                grad_metrics = compute_grad_metrics(groups)
+                grad_metrics.update(clip_scalar_metrics(model))
+
             # Gradient clipping for stability
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            clip_norm = nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if should_log:
+                grad_metrics["grad_norm/post_clip"] = clip_norm.item()
 
             optimizer.step()
             scheduler.step()  # step-level scheduling
@@ -304,10 +315,13 @@ def train_clip(cfg: CLIPTrainConfig) -> None:
             pbar.set_postfix(loss=f"{loss_val:.4f}", lr=f"{current_lr:.2e}")
 
             if global_step % cfg.log_every_n_steps == 0:
-                wandb_logger.log_metrics(
-                    {"train/loss": loss_val, "train/lr": current_lr},
-                    step=global_step,
-                )
+                log_payload = {
+                    "train/loss": loss_val,
+                    "train/lr": current_lr,
+                    "train/effective_update": current_lr * grad_metrics.get("grad_norm/total", 0.0),
+                }
+                log_payload.update(grad_metrics)
+                wandb_logger.log_metrics(log_payload, step=global_step)
 
         avg_train_loss = epoch_loss / max(1, n_train_steps)
 
