@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import copy
 
 class DINOEngine(nn.Module):
@@ -95,7 +96,7 @@ class DINOEngine(nn.Module):
                 total_loss += loss
                 n_loss_term += 1
         
-        return total_loss / n_loss_term
+        return torch.Tensor(total_loss / n_loss_term)
 
     @torch.no_grad()
     def update_teacher(self, momentum: float):

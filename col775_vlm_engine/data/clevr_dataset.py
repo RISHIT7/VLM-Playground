@@ -3,7 +3,7 @@ import json
 from PIL import Image
 import torch
 from torch.utils.data import Dataset
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 class CLEVRDataset(Dataset):
     def __init__(self, config, mode: str, split: str = "train",
