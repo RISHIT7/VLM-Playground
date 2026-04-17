@@ -2,7 +2,6 @@ import os
 import logging
 from typing import Dict, Any, List, Optional
 import torch
-import torchvision.transforms.functional as TF
 import wandb
 from wandb.sdk.wandb_run import Run
 
