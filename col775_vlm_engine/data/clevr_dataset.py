@@ -34,16 +34,18 @@ class CLEVRDataset(Dataset):
             self.image_dir = os.path.join(base_dir, "Clevr_official", "images", split)
             count_json = os.path.join(base_dir, "Probe-Datasets", f"clevr_count_{split}.json")
             color_json = os.path.join(base_dir, "Probe-Datasets", f"clevr_colors_{split}.json")
-            with open(count_json, 'r') as fc, open(color_json, 'r') as fp:
+            caption_json = os.path.join(base_dir, f"clevr_{split}_captions.json")
+            with open(count_json, 'r') as fc, open(color_json, 'r') as fp, open(caption_json, 'r') as fcap:
                 count_examples = json.load(fc)["examples"]
                 color_examples = json.load(fp)["examples"]
+                caption_examples = json.load(fcap)
             self.counts = []
             self.color_sets = []
             self.annotations = []
-            for count_ex, color_ex in zip(count_examples, color_examples):
+            for count_ex, color_ex, cap_ex in zip(count_examples, color_examples, caption_examples):
                 self.counts.append(count_ex["label"])
                 self.color_sets.append(torch.tensor(color_ex["multi_hot"], dtype=torch.float32))
-                self.annotations.append({"image_filename": count_ex["image_filename"], "caption": ""})
+                self.annotations.append({"image_filename": count_ex["image_filename"], "caption": cap_ex["caption"]})
 
     def __len__(self):
         return len(self.annotations)
