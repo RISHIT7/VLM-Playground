@@ -46,9 +46,9 @@ def get_config(env: str = "local") -> EnvConfig:
     elif env == "kaggle":
         return EnvConfig(
             env_name="kaggle",
-            base_dir_part_a="/kaggle/input/clevr/PartA",
-            base_dir_part_aa="/kaggle/input/clevr/PartAa",
-            batch_size=64,
+            base_dir_part_a="/kaggle/input/datasets/ashish2001/col775-a2-clevr-extended-100k/Part_A",
+            base_dir_part_aa="/kaggle/input/datasets/ashish2001/col775-a2-clevr-extended-100k/Part_Aa",
+            batch_size=128,
             num_workers=2,
             pin_memory=True,
             prefetch_factor=2,
