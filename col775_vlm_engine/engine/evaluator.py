@@ -82,6 +82,7 @@ def evaluate_clip_retrieval(
 
     # Averaged Recall@1 is the primary scalar used for best-checkpoint selection
     results["avg_R@1"] = (results["i2t_R@1"] + results["t2i_R@1"]) / 2.0
+    results["avg_R@3"] = (results["i2t_R@3"] + results["t2i_R@3"]) / 2.0
     return results
 
 

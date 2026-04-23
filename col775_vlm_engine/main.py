@@ -21,6 +21,16 @@ python main.py --mode clip --clip-epochs 50 --clip-lr 1e-4 --clip-env kaggle
 
 # Run offline with W&B disabled (useful for HPC without internet)
 python main.py --mode both --clip-wandb-offline --dino-wandb-offline
+
+# Run all 8 linear probes (CLIP + DINO × CLS + GAP × count + color)
+python main.py --mode linear_probe \
+    --probe-clip-ckpt checkpoints/clip/checkpoint_best.pt \
+    --probe-dino-ckpt checkpoints/dino/checkpoint_best.pt
+
+# Run a single probe
+python main.py --mode linear_probe \
+    --probe-backbone clip --probe-repr cls --probe-task count \
+    --probe-clip-ckpt checkpoints/clip/checkpoint_best.pt
 """
 
 import argparse
@@ -43,8 +53,9 @@ def parse_args() -> argparse.Namespace:
     )
 
     p.add_argument(
-        "--mode", required=True, choices=["clip", "dino", "both"],
-        help="Which model(s) to train.",
+        "--mode", required=True,
+        choices=["clip", "dino", "both", "linear_probe"],
+        help="Which model(s) to train or evaluate.",
     )
 
     p.add_argument("--seed",   type=int, default=None, help="Global random seed.")
@@ -88,6 +99,27 @@ def parse_args() -> argparse.Namespace:
     dino.add_argument("--dino-local-crops",    type=int,   default=None,
                       help="Number of local DINO crops (default 8).")
     dino.add_argument("--dino-student-temp",   type=float, default=None)
+
+    probe = p.add_argument_group("Linear Probe")
+    probe.add_argument("--probe-clip-ckpt",     type=str, default=None,
+                       help="Path to trained CLIP checkpoint for probing.")
+    probe.add_argument("--probe-dino-ckpt",     type=str, default=None,
+                       help="Path to trained DINO checkpoint for probing.")
+    probe.add_argument("--probe-backbone",      type=str, default=None,
+                       choices=["clip", "dino"],
+                       help="Run probe for a single backbone (default: both).")
+    probe.add_argument("--probe-repr",          type=str, default=None,
+                       choices=["cls", "gap"],
+                       help="Run probe for a single representation (default: both).")
+    probe.add_argument("--probe-task",          type=str, default=None,
+                       choices=["count", "color"],
+                       help="Run probe for a single task (default: both).")
+    probe.add_argument("--probe-epochs",        type=int, default=None)
+    probe.add_argument("--probe-lr",            type=float, default=None)
+    probe.add_argument("--probe-batch-size",    type=int, default=None)
+    probe.add_argument("--probe-env",           type=str, default=None)
+    probe.add_argument("--probe-checkpoint-dir",type=str, default=None)
+    probe.add_argument("--probe-wandb-offline", action="store_true")
 
     return p.parse_args()
 
@@ -134,6 +166,59 @@ def _build_dino_cfg(args: argparse.Namespace):
     return get_dino_config(**overrides)
 
 
+def _run_linear_probe(args: argparse.Namespace) -> None:
+    from configs.linear_probe_config import get_linear_probe_config
+    from engine.trainer_linear_probe import train_linear_probe
+
+    # Collect base overrides shared across all runs
+    base: dict = {}
+    if args.seed                is not None: base["seed"]           = args.seed
+    if args.device              is not None: base["device"]         = args.device
+    if args.probe_epochs        is not None: base["epochs"]         = args.probe_epochs
+    if args.probe_lr            is not None: base["lr"]             = args.probe_lr
+    if args.probe_batch_size    is not None: base["batch_size"]     = args.probe_batch_size
+    if args.probe_env           is not None: base["env"]            = args.probe_env
+    if args.probe_checkpoint_dir is not None: base["checkpoint_dir"] = args.probe_checkpoint_dir
+    if args.probe_wandb_offline:              base["wandb_offline"]  = True
+
+    # If all three selectors are given, run a single experiment
+    if args.probe_backbone and args.probe_repr and args.probe_task:
+        overrides = {
+            **base,
+            "backbone": args.probe_backbone,
+            "representation": args.probe_repr,
+            "task": args.probe_task,
+            "clip_checkpoint": args.probe_clip_ckpt,
+            "dino_checkpoint": args.probe_dino_ckpt,
+        }
+        cfg = get_linear_probe_config(**overrides)
+        train_linear_probe(cfg)
+    else:
+        # Run all 8 combinations (or a filtered subset)
+        backbones = [args.probe_backbone] if args.probe_backbone else ["clip", "dino"]
+        representations = [args.probe_repr] if args.probe_repr else ["cls", "gap"]
+        tasks = [args.probe_task] if args.probe_task else ["count", "color"]
+
+        for backbone in backbones:
+            for representation in representations:
+                for task in tasks:
+                    tag = f"{backbone}_{representation}_{task}"
+                    logger.info("=" * 60)
+                    logger.info(f"  Starting linear probe: {tag}")
+                    logger.info("=" * 60)
+                    overrides = {
+                        **base,
+                        "backbone": backbone,
+                        "representation": representation,
+                        "task": task,
+                        "clip_checkpoint": args.probe_clip_ckpt,
+                        "dino_checkpoint": args.probe_dino_ckpt,
+                        "wandb_run_name": f"probe-{tag}",
+                    }
+                    cfg = get_linear_probe_config(**overrides)
+                    train_linear_probe(cfg)
+
+
 def main() -> None:
     args = parse_args()
     mode = args.mode
@@ -153,6 +238,9 @@ def main() -> None:
         logger.info("  Starting DINO training")
         logger.info("=" * 60)
         train_dino(dino_cfg)
+
+    if mode == "linear_probe":
+        _run_linear_probe(args)
 
 
 if __name__ == "__main__":
