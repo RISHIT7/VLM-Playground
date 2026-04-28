@@ -29,7 +29,7 @@ class DINOProjectionHead(nn.Module):
         
         self.mlp = nn.Sequential(*layers)
         self.last_layer = weight_norm(nn.Linear(bottleneck_dim, out_dim, bias=False))
-        self.last_layer.parametrizations.weight.original1.data.fill_(1)
+        self.last_layer.parametrizations.weight.original0.data.fill_(1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.mlp(x)

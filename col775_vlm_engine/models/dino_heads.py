@@ -39,8 +39,8 @@ class DINOEngine(nn.Module):
         Returns:
             Logits of shape ((2+V)*B, out_dim)
         """
-        global_crops = global_crops.flatten(0, 1) # (B, 2, 3, 224, 224) -> (2*B, 3, 224, 224)
-        local_crops = local_crops.flatten(0, 1) # (B, V, 3, 96, 96) -> (V*B, 3, 96, 96)
+        global_crops = global_crops.transpose(0,1).flatten(0, 1) # (B, 2, 3, 224, 224) -> (2*B, 3, 224, 224)
+        local_crops = local_crops.transpose(0,1).flatten(0, 1) # (B, V, 3, 96, 96) -> (V*B, 3, 96, 96)
         global_latent_embeddings = self.student_network[0](global_crops) # (2*B, 384)
         local_latent_embeddings = self.student_network[0](local_crops) # (V*B, 384)
 
@@ -59,7 +59,7 @@ class DINOEngine(nn.Module):
         Returns:
             Logits of shape (2*B, out_dim)
         """
-        global_crops = global_crops.flatten(0, 1) # (B, 2, 3, 224, 224) -> (2*B, 3, 224, 224)
+        global_crops = global_crops.transpose(0,1).flatten(0, 1) # (B, 2, 3, 224, 224) -> (2*B, 3, 224, 224)
         latent_embeddings = self.teacher_network[0](global_crops) # (2*B, 384)
         logits = self.teacher_network[1](latent_embeddings) # (2*B, out_dim)
         return logits
@@ -96,7 +96,7 @@ class DINOEngine(nn.Module):
                 total_loss += loss
                 n_loss_term += 1
         
-        return torch.Tensor(total_loss / n_loss_term)
+        return total_loss / n_loss_term
 
     @torch.no_grad()
     def update_teacher(self, momentum: float):
