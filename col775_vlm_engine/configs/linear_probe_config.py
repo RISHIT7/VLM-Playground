@@ -5,7 +5,7 @@ from typing import Optional
 @dataclass
 class LinearProbeConfig:
     # Backbone
-    backbone: str = "clip"          # "clip" | "dino"
+    backbone: str = "clip"          # "clip" | "dino" | "dino_teacher"
     representation: str = "cls"     # "cls" | "gap"
     task: str = "count"             # "count" | "color"
 

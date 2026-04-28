@@ -59,10 +59,10 @@ def _build_backbone(cfg: LinearProbeConfig, device: torch.device) -> VisionTrans
     ckpt_path: Optional[str] = None
     if cfg.backbone == "clip":
         ckpt_path = cfg.clip_checkpoint
-    elif cfg.backbone == "dino":
+    elif cfg.backbone in ("dino", "dino_teacher"):
         ckpt_path = cfg.dino_checkpoint
     else:
-        raise ValueError(f"Unknown backbone '{cfg.backbone}', expected 'clip' or 'dino'.")
+        raise ValueError(f"Unknown backbone '{cfg.backbone}', expected 'clip', 'dino', or 'dino_teacher'.")
 
     if ckpt_path is None or not os.path.isfile(ckpt_path):
         raise FileNotFoundError(
@@ -86,9 +86,6 @@ def _build_backbone(cfg: LinearProbeConfig, device: torch.device) -> VisionTrans
         logger.info("  ✓ Loaded ViT backbone from CLIP checkpoint.")
 
     elif cfg.backbone == "dino":
-        # DINOEngine saves student network separately
-        # student_network is an nn.ModuleList([vit, head])
-        # Keys look like "0.cls_token", "0.pos_embedding", ... for the ViT
         student_state = ckpt["student_network_state"]
         vit_state = {
             k.replace("0.", "", 1): v
@@ -97,6 +94,16 @@ def _build_backbone(cfg: LinearProbeConfig, device: torch.device) -> VisionTrans
         }
         vit.load_state_dict(vit_state, strict=True)
         logger.info("  ✓ Loaded ViT backbone from DINO student checkpoint.")
+
+    elif cfg.backbone == "dino_teacher":
+        teacher_state = ckpt["teacher_network_state"]
+        vit_state = {
+            k.replace("0.", "", 1): v
+            for k, v in teacher_state.items()
+            if k.startswith("0.")
+        }
+        vit.load_state_dict(vit_state, strict=True)
+        logger.info("  ✓ Loaded ViT backbone from DINO teacher checkpoint.")
 
     # Freeze everything
     vit.requires_grad_(False)
@@ -449,33 +456,18 @@ def train_linear_probe(cfg: LinearProbeConfig) -> None:
     wandb_logger.finish()
 
 
-# convenience: run all 8 experiments 
+# convenience: run all 12 experiments 
 
 def run_all_linear_probes(
     clip_checkpoint: str,
     dino_checkpoint: str,
     base_overrides: Optional[dict] = None,
 ) -> None:
-    """
-    Launches all 8 linear-probe experiments:
-
-        2 backbones (clip, dino)
-      × 2 representations (cls, gap)
-      × 2 tasks (count, color)
-
-    Each run is independently resumable.
-
-    Args:
-        clip_checkpoint: Path to the best/latest CLIP checkpoint.
-        dino_checkpoint: Path to the best/latest DINO checkpoint.
-        base_overrides:  Optional dict of LinearProbeConfig overrides
-                         applied to every run (e.g. env, epochs, lr).
-    """
     from configs.linear_probe_config import get_linear_probe_config
 
     base = base_overrides or {}
 
-    for backbone in ("clip", "dino"):
+    for backbone in ("clip", "dino", "dino_teacher"):
         for representation in ("cls", "gap"):
             for task in ("count", "color"):
                 tag = f"{backbone}_{representation}_{task}"
