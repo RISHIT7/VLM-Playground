@@ -5,6 +5,7 @@ description = "representation learning"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "modal>=1.4.2",
     "numpy>=2.2.6",
     "pillow>=12.2.0",
     "scikit-learn>=1.7.2",
