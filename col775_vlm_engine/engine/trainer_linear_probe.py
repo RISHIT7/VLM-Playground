@@ -299,6 +299,7 @@ def train_linear_probe(cfg: LinearProbeConfig) -> None:
     start_epoch = 0
     global_step = 0
     # For "count" higher accuracy is better; for "color" higher F1 is better
+    metric_key = ""
     best_metric = -math.inf
     metrics_history: list = []
 

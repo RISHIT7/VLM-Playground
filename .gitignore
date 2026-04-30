@@ -210,8 +210,10 @@ Dataset
 .DS_Store
 dump/
 data/*
+wandb
 
 /data/A2_dataset
+checkpoints/
 .DS_Store
 
 /dump
