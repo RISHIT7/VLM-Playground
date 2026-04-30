@@ -45,11 +45,19 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
     tokenizer = AutoTokenizer.from_pretrained(cfg.llm_model_id)
     if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
 
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    # Detect if we should use the model's native dtype (e.g., for FP8 or pre-quantized models)
+    if "FP8" in cfg.llm_model_id.upper() or "INT8" in cfg.llm_model_id.upper():
+        dtype = "auto"
+    else:
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    
     llm = AutoModelForCausalLM.from_pretrained(
         cfg.llm_model_id, 
         torch_dtype=dtype,
-    ).to(device)
+        device_map={"": device} if dtype == "auto" else None
+    )
+    if dtype != "auto":
+        llm = llm.to(device)
     
     llm.gradient_checkpointing_enable()
 
@@ -127,7 +135,9 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
             attention_mask = batch["attention_mask"].to(device, non_blocking=True)
             labels = batch["labels"].to(device, non_blocking=True)
 
-            with torch.cuda.amp.autocast(dtype=dtype):
+            # Fallback dtype for autocast if model is in 'auto' (FP8) mode
+            autocast_dtype = dtype if isinstance(dtype, torch.dtype) else torch.bfloat16
+            with torch.cuda.amp.autocast(dtype=autocast_dtype):
                 outputs = model(images=images, input_ids=input_ids, attention_mask=attention_mask, labels=labels)
                 loss = outputs.loss / cfg.stage2_grad_accum
 
@@ -194,7 +204,9 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
     if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
 
     # Determine dtype based on device
-    if device.type == "cuda":
+    if "FP8" in cfg.llm_model_id.upper() or "INT8" in cfg.llm_model_id.upper():
+        dtype = "auto"
+    elif device.type == "cuda":
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     elif device.type == "mps":
         dtype = torch.float16 # MPS prefers float16
@@ -204,7 +216,10 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
     llm = AutoModelForCausalLM.from_pretrained(
         cfg.llm_model_id, 
         torch_dtype=dtype,
-    ).to(device)
+        device_map={"": device} if dtype == "auto" else None
+    )
+    if dtype != "auto":
+        llm = llm.to(device)
     
     llm.requires_grad_(False)
     llm.gradient_checkpointing_enable()
@@ -285,7 +300,8 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
 
             # Use torch.amp.autocast for device-agnostic mixed precision
             autocast_device = "cuda" if device.type == "cuda" else "cpu"
-            with torch.amp.autocast(device_type=autocast_device, dtype=dtype, enabled=(dtype != torch.float32)):
+            autocast_dtype = dtype if isinstance(dtype, torch.dtype) else torch.bfloat16
+            with torch.amp.autocast(device_type=autocast_device, dtype=autocast_dtype, enabled=(dtype != torch.float32)):
                 outputs = model(images=images, input_ids=input_ids, attention_mask=attention_mask, labels=labels)
                 loss = outputs.loss / cfg.stage1_grad_accum
 
