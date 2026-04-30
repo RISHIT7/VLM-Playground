@@ -60,7 +60,8 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--seed",   type=int, default=None, help="Global random seed.")
     p.add_argument("--device", type=str, default=None, help="Device: cuda | cpu | mps.")
-    p.add_argument("--data-root", type=str, default="/scratch/work/rishit/COL775/assignment-2-data",)
+    p.add_argument("--data-root", type=str, default="/scratch/work/rishit/COL775/assignment-2-data")
+    p.add_argument("--captions-json", type=str, default="/scratch/work/rishit/COL775/assignment-2-data/train.jsonl")
 
     clip = p.add_argument_group("CLIP")
     clip.add_argument("--clip-resume",        type=str,   default=None,
@@ -243,6 +244,7 @@ def _run_vlm_stage1(args: argparse.Namespace) -> None:
     if args.vlm_batch_size is not None: cfg.stage1_per_device_bs = args.vlm_batch_size
     if args.vlm_epochs is not None: cfg.stage1_epochs = args.vlm_epochs
     if args.data_root is not None: cfg.data_root = args.data_root
+    if args.captions_json is not None: cfg.captions_json = args.captions_json
 
     train_vlm_stage1_launcher(cfg, args.vlm_vit_ckpt)
 
@@ -256,6 +258,7 @@ def _run_vlm_stage2(args: argparse.Namespace) -> None:
     if args.vlm_batch_size is not None: cfg.stage2_per_device_bs = args.vlm_batch_size
     if args.vlm_epochs is not None: cfg.stage2_epochs = args.vlm_epochs
     if args.data_root is not None: cfg.data_root = args.data_root
+    if args.captions_json is not None: cfg.captions_json = args.captions_json
 
     stage1_ckpt_path = cfg.checkpoint_dir + "/vlm_stage1_proj_ep1.pt" # Example path, should ideally be configurable
     train_vlm_stage2_launcher(cfg, args.vlm_vit_ckpt, stage1_ckpt_path)
