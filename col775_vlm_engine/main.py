@@ -60,6 +60,7 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--seed",   type=int, default=None, help="Global random seed.")
     p.add_argument("--device", type=str, default=None, help="Device: cuda | cpu | mps.")
+    p.add_argument("--wandb-key", type=str, default=None, help="W&B API Key for non-interactive login.")
     p.add_argument("--data-root", type=str, default="/scratch/work/rishit/COL775/assignment-2-data")
     p.add_argument("--captions-json", type=str, default="/scratch/work/rishit/COL775/assignment-2-data/train.jsonl")
 
@@ -134,7 +135,8 @@ def parse_args() -> argparse.Namespace:
                      help="Per-device batch size for VLM training.")
     vlm.add_argument("--vlm-epochs", type=int, default=None,
                      help="Number of epochs for VLM training.")
-    
+    vlm.add_argument("--vlm-wandb-offline", action="store_true",
+                     help="Run VLM training with W&B in offline mode.")
 
     return p.parse_args()
 
@@ -266,6 +268,15 @@ def _run_vlm_stage2(args: argparse.Namespace) -> None:
 def main() -> None:
     args = parse_args()
     mode = args.mode
+
+    # Handle W&B login/offline mode
+    import os
+    if args.wandb_key:
+        import wandb
+        wandb.login(key=args.wandb_key)
+    elif getattr(args, "vlm_wandb_offline", False) or getattr(args, "probe_wandb_offline", False):
+        os.environ["WANDB_MODE"] = "offline"
+        os.environ["WANDB_SILENT"] = "true"
 
     if mode in ("clip", "both"):
         from engine.trainer_clip import train_clip
