@@ -14,7 +14,7 @@ class CLEVRCaptionDataset(Dataset):
         self.tokenizer = tokenizer
         
         self.base_dir = self.config.data_root
-        self.json_path = self.config.captions_json # os.path.join(self.base_dir, "Part_Aa", f"clevr_{split}_captions.json")
+        self.json_path = os.path.join(self.config.captions_json, f"clevr_{split}_captions.json") # os.path.join(self.base_dir, "Part_Aa", f"clevr_{split}_captions.json")
         self.image_dir = os.path.join(self.base_dir, "Part_Aa", "Clevr_official", "images", split)
         
         with open(self.json_path, "r") as f:
