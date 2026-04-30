@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument(
         "--mode", required=True,
-        choices=["clip", "dino", "both", "linear_probe"],
+        choices=["clip", "dino", "both", "linear_probe", "vlm_stage1", "vlm_stage2"],
         help="Which model(s) to train or evaluate.",
     )
 
@@ -120,6 +120,12 @@ def parse_args() -> argparse.Namespace:
     probe.add_argument("--probe-env",           type=str, default=None)
     probe.add_argument("--probe-checkpoint-dir",type=str, default=None)
     probe.add_argument("--probe-wandb-offline", action="store_true")
+
+    vlm = p.add_argument_group("VLM")
+    vlm.add_argument("--vlm-vit-ckpt", type=str, default="checkpoints/dino/checkpoint_best.pt",
+                     help="Path to the ViT backbone checkpoint (DINO student).")
+    vlm.add_argument("--num-gpus", type=int, default=1,
+                     help="Number of GPUs to use for VLM training.")
 
     return p.parse_args()
 
@@ -218,6 +224,22 @@ def _run_linear_probe(args: argparse.Namespace) -> None:
                     cfg = get_linear_probe_config(**overrides)
                     train_linear_probe(cfg)
 
+def _run_vlm_stage1(args: argparse.Namespace) -> None:
+    from configs.vlm_config import VLMConfig
+    from engine.trainer_vlm import train_vlm_stage1_launcher
+    cfg = VLMConfig(
+        num_gpus=args.num_gpus,
+    )
+    train_vlm_stage1_launcher(cfg, args.vlm_vit_ckpt)
+
+def _run_vlm_stage2(args: argparse.Namespace) -> None:
+    from configs.vlm_config import VLMConfig
+    from engine.trainer_vlm import train_vlm_stage2_launcher
+    cfg = VLMConfig(
+        num_gpus=args.num_gpus,
+    )
+    stage1_ckpt_path = cfg.checkpoint_dir + "/vlm_stage1_proj_ep1.pt" # Example path, should ideally be configurable
+    train_vlm_stage2_launcher(cfg, args.vlm_vit_ckpt, stage1_ckpt_path)
 
 def main() -> None:
     args = parse_args()
@@ -241,6 +263,12 @@ def main() -> None:
 
     if mode == "linear_probe":
         _run_linear_probe(args)
+
+    if mode == "vlm_stage1":
+        _run_vlm_stage1(args)
+
+    if mode == "vlm_stage2":
+        _run_vlm_stage2(args)
 
 
 if __name__ == "__main__":

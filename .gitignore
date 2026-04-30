@@ -215,3 +215,5 @@ data/*
 .DS_Store
 
 /dump
+
+/weights
