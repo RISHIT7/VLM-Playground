@@ -245,7 +245,21 @@ def _run_vlm_stage1(args: argparse.Namespace) -> None:
         device=args.vlm_device,
     )
 
-    if args.vlm_batch_size is not None: cfg.stage1_per_device_bs = args.vlm_batch_size
+    # Capture base effective batch size for LR scaling
+    base_eff_bs = cfg.stage1_target_bs 
+    
+    if args.vlm_batch_size is not None: 
+        cfg.stage1_per_device_bs = args.vlm_batch_size
+        
+    # Calculate new effective batch size (Per-device * GPUs * Accumulation)
+    new_eff_bs = cfg.stage1_per_device_bs * cfg.num_gpus * cfg.stage1_grad_accum
+    
+    # Scale LR linearly if the effective batch size changed
+    if new_eff_bs != base_eff_bs:
+        old_lr = cfg.stage1_lr
+        cfg.stage1_lr = old_lr * (new_eff_bs / base_eff_bs)
+        logger.info(f"[Stage 1] Effective batch size changed. Scaling LR: {old_lr:.2e} -> {cfg.stage1_lr:.2e} (Eff BS: {new_eff_bs})")
+
     if args.vlm_epochs is not None: cfg.stage1_epochs = args.vlm_epochs
     if args.data_root is not None: cfg.data_root = args.data_root
     if args.captions_json is not None: cfg.captions_json = args.captions_json
@@ -260,7 +274,21 @@ def _run_vlm_stage2(args: argparse.Namespace) -> None:
         num_gpus=args.num_gpus,
     )
 
-    if args.vlm_batch_size is not None: cfg.stage2_per_device_bs = args.vlm_batch_size
+    # Capture base effective batch size for LR scaling
+    base_eff_bs = cfg.stage2_target_bs 
+
+    if args.vlm_batch_size is not None: 
+        cfg.stage2_per_device_bs = args.vlm_batch_size
+        
+    # Calculate new effective batch size
+    new_eff_bs = cfg.stage2_per_device_bs * cfg.num_gpus * cfg.stage2_grad_accum
+    
+    # Scale LR linearly if the effective batch size changed
+    if new_eff_bs != base_eff_bs:
+        old_lr = cfg.stage2_lr
+        cfg.stage2_lr = old_lr * (new_eff_bs / base_eff_bs)
+        logger.info(f"[Stage 2] Effective batch size changed. Scaling LR: {old_lr:.2e} -> {cfg.stage2_lr:.2e} (Eff BS: {new_eff_bs})")
+
     if args.vlm_epochs is not None: cfg.stage2_epochs = args.vlm_epochs
     if args.data_root is not None: cfg.data_root = args.data_root
     if args.captions_json is not None: cfg.captions_json = args.captions_json
