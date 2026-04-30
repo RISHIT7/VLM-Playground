@@ -218,3 +218,7 @@ outputs/
 .DS_Store
 
 /dump
+
+/weights
+checkpoints/
+outputs/
