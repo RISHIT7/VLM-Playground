@@ -60,6 +60,7 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--seed",   type=int, default=None, help="Global random seed.")
     p.add_argument("--device", type=str, default=None, help="Device: cuda | cpu | mps.")
+    p.add_argument("--data-root", type=str, default="/scratch/work/rishit/COL775/assignment-2-data",)
 
     clip = p.add_argument_group("CLIP")
     clip.add_argument("--clip-resume",        type=str,   default=None,
@@ -132,6 +133,7 @@ def parse_args() -> argparse.Namespace:
                      help="Per-device batch size for VLM training.")
     vlm.add_argument("--vlm-epochs", type=int, default=None,
                      help="Number of epochs for VLM training.")
+    
 
     return p.parse_args()
 
@@ -237,9 +239,11 @@ def _run_vlm_stage1(args: argparse.Namespace) -> None:
         num_gpus=args.num_gpus,
         device=args.vlm_device,
     )
+
     if args.vlm_batch_size is not None: cfg.stage1_per_device_bs = args.vlm_batch_size
     if args.vlm_epochs is not None: cfg.stage1_epochs = args.vlm_epochs
-    
+    if args.data_root is not None: cfg.data_root = args.data_root
+
     train_vlm_stage1_launcher(cfg, args.vlm_vit_ckpt)
 
 def _run_vlm_stage2(args: argparse.Namespace) -> None:
@@ -248,6 +252,11 @@ def _run_vlm_stage2(args: argparse.Namespace) -> None:
     cfg = VLMConfig(
         num_gpus=args.num_gpus,
     )
+
+    if args.vlm_batch_size is not None: cfg.stage2_per_device_bs = args.vlm_batch_size
+    if args.vlm_epochs is not None: cfg.stage2_epochs = args.vlm_epochs
+    if args.data_root is not None: cfg.data_root = args.data_root
+
     stage1_ckpt_path = cfg.checkpoint_dir + "/vlm_stage1_proj_ep1.pt" # Example path, should ideally be configurable
     train_vlm_stage2_launcher(cfg, args.vlm_vit_ckpt, stage1_ckpt_path)
 
