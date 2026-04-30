@@ -126,6 +126,12 @@ def parse_args() -> argparse.Namespace:
                      help="Path to the ViT backbone checkpoint (DINO student).")
     vlm.add_argument("--num-gpus", type=int, default=1,
                      help="Number of GPUs to use for VLM training.")
+    vlm.add_argument("--vlm-device", type=str, default="cuda",
+                     help="Device to use (cuda, cpu, mps).")
+    vlm.add_argument("--vlm-batch-size", type=int, default=None,
+                     help="Per-device batch size for VLM training.")
+    vlm.add_argument("--vlm-epochs", type=int, default=None,
+                     help="Number of epochs for VLM training.")
 
     return p.parse_args()
 
@@ -229,7 +235,11 @@ def _run_vlm_stage1(args: argparse.Namespace) -> None:
     from engine.trainer_vlm import train_vlm_stage1_launcher
     cfg = VLMConfig(
         num_gpus=args.num_gpus,
+        device=args.vlm_device,
     )
+    if args.vlm_batch_size is not None: cfg.stage1_per_device_bs = args.vlm_batch_size
+    if args.vlm_epochs is not None: cfg.stage1_epochs = args.vlm_epochs
+    
     train_vlm_stage1_launcher(cfg, args.vlm_vit_ckpt)
 
 def _run_vlm_stage2(args: argparse.Namespace) -> None:

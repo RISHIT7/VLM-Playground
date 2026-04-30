@@ -63,8 +63,6 @@ class VLMModel(nn.Module):
         (discarding the [CLS] token), and projects them via the reverse-bottleneck.
         """
         with torch.no_grad():
-            # Pass return_patches=True to get (B, num_patches, embed_dim)
-            # The VisionTransformer handles dropping the CLS token internally when return_patches=True
             patch_tokens = self.vision_encoder(images, return_patches=True)
                 
         projected_visuals = self.projector(patch_tokens)
@@ -76,14 +74,18 @@ class VLMModel(nn.Module):
         Fuses visual and textual embeddings and computes the autoregressive loss.
         """
         visual_embeds = self.extract_visual_features(images)
-        text_embeds = self.llm.get_input_embeddings()(input_ids)
-        
         img_mask = (input_ids == self.img_placeholder_id)
+        lookup_ids = input_ids.clone()
+        lookup_ids[img_mask] = 0 
         
-        text_embeds[img_mask] = visual_embeds.view(-1, visual_embeds.shape[-1])
+        text_embeds = self.llm.get_input_embeddings()(lookup_ids)
+        
+        inputs_embeds = text_embeds.to(visual_embeds.dtype).clone()
+        
+        inputs_embeds[img_mask] = visual_embeds.reshape(-1, visual_embeds.shape[-1])
         
         outputs = self.llm(
-            inputs_embeds=text_embeds,
+            inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             labels=labels,
             return_dict=True
@@ -97,13 +99,15 @@ class VLMModel(nn.Module):
         Utility function for inference/evaluation to generate text autoregressively.
         """
         visual_embeds = self.extract_visual_features(images)
-        text_embeds = self.llm.get_input_embeddings()(input_ids)
-        
         img_mask = (input_ids == self.img_placeholder_id)
-        text_embeds[img_mask] = visual_embeds.view(-1, visual_embeds.shape[-1])
+        lookup_ids = input_ids.clone()
+        lookup_ids[img_mask] = 0
+        text_embeds = self.llm.get_input_embeddings()(lookup_ids)
+        inputs_embeds = text_embeds.to(visual_embeds.dtype).clone()
+        inputs_embeds[img_mask] = visual_embeds.reshape(-1, visual_embeds.shape[-1])
         
         return self.llm.generate(
-            inputs_embeds=text_embeds,
+            inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             **kwargs
         )

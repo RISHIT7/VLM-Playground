@@ -54,7 +54,15 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
     llm.gradient_checkpointing_enable()
 
     vision_encoder = VisionTransformer(img_size=224, patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_dim=1536)
-    vision_encoder.load_state_dict(torch.load(vit_checkpoint_path, map_location="cpu")['student_network_state'], strict=False)
+    
+    ckpt = torch.load(vit_checkpoint_path, map_location="cpu")
+    full_state = ckpt.get('model_state', ckpt)
+    state_dict = {k.replace("vit_backbone.", ""): v for k, v in full_state.items() if k.startswith("vit_backbone.")}
+    
+    msg = vision_encoder.load_state_dict(state_dict, strict=False)
+    if is_main_process:
+        logger.info(f"[Stage 2] Loaded CLIP Vision Backbone with message: {msg}")
+
     vision_encoder = vision_encoder.to(device)
     vision_encoder.requires_grad_(False)
 
@@ -173,8 +181,10 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
     is_multi_gpu = cfg.num_gpus > 1
     if is_multi_gpu:
         setup_ddp(rank, cfg.num_gpus)
+        device = torch.device(f"cuda:{rank}")
+    else:
+        device = torch.device(cfg.device)
         
-    device = torch.device(f"cuda:{rank}")
     is_main_process = (rank == 0)
     
     if is_main_process:
@@ -183,7 +193,14 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
     tokenizer = AutoTokenizer.from_pretrained(cfg.llm_model_id)
     if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
 
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    # Determine dtype based on device
+    if device.type == "cuda":
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    elif device.type == "mps":
+        dtype = torch.float16 # MPS prefers float16
+    else:
+        dtype = torch.float32 # CPU fallback
+        
     llm = AutoModelForCausalLM.from_pretrained(
         cfg.llm_model_id, 
         torch_dtype=dtype,
@@ -193,7 +210,15 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
     llm.gradient_checkpointing_enable()
 
     vision_encoder = VisionTransformer(img_size=224, patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_dim=1536)
-    vision_encoder.load_state_dict(torch.load(vit_checkpoint_path, map_location="cpu")['student_network_state'], strict=False)
+    
+    ckpt = torch.load(vit_checkpoint_path, map_location="cpu")
+    full_state = ckpt.get('model_state', ckpt)
+    state_dict = {k.replace("vit_backbone.", ""): v for k, v in full_state.items() if k.startswith("vit_backbone.")}
+    
+    msg = vision_encoder.load_state_dict(state_dict, strict=False)
+    if is_main_process:
+        logger.info(f"[Stage 1] Loaded CLIP Vision Backbone with message: {msg}")
+        
     vision_encoder = vision_encoder.to(device)
     vision_encoder.requires_grad_(False)
 
@@ -234,7 +259,10 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
     total_steps = len(train_dl) * cfg.stage1_epochs // cfg.stage1_grad_accum
     warmup_steps = int(cfg.warmup_ratio * total_steps)
     scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
-    scaler = torch.cuda.amp.GradScaler(enabled=(dtype == torch.float16))
+    
+    # GradScaler only for CUDA
+    use_scaler = (dtype == torch.float16 and device.type == "cuda")
+    scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
 
     if is_main_process:
         wandb_logger = WandbLogger(project_name=cfg.wandb_project, config=cfg.__dict__, run_name=f"vlm-stage1-{cfg.num_gpus}gpu")
@@ -255,7 +283,9 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
             attention_mask = batch["attention_mask"].to(device, non_blocking=True)
             labels = batch["labels"].to(device, non_blocking=True)
 
-            with torch.cuda.amp.autocast(dtype=dtype):
+            # Use torch.amp.autocast for device-agnostic mixed precision
+            autocast_device = "cuda" if device.type == "cuda" else "cpu"
+            with torch.amp.autocast(device_type=autocast_device, dtype=dtype, enabled=(dtype != torch.float32)):
                 outputs = model(images=images, input_ids=input_ids, attention_mask=attention_mask, labels=labels)
                 loss = outputs.loss / cfg.stage1_grad_accum
 

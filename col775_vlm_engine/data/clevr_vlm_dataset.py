@@ -13,9 +13,9 @@ class CLEVRCaptionDataset(Dataset):
         self.transform = transform
         self.tokenizer = tokenizer
         
-        self.base_dir = "data/A2_dataset/Part_Aa"
-        self.json_path = os.path.join(self.base_dir, f"clevr_{split}_captions.json")
-        self.image_dir = os.path.join(self.base_dir, "Clevr_official", "images", split)
+        self.base_dir = self.config.data_root
+        self.json_path = os.path.join(self.base_dir, "Part_Aa", f"clevr_{split}_captions.json")
+        self.image_dir = os.path.join(self.base_dir, "Part_Aa", "Clevr_official", "images", split)
         
         with open(self.json_path, "r") as f:
             self.data = json.load(f)
@@ -31,7 +31,6 @@ class CLEVRCaptionDataset(Dataset):
         if self.transform:
             image = self.transform(image)
         else:
-            # Default fallback transform if none provided
             from torchvision import transforms
             fallback_transform = transforms.Compose([
                 transforms.Resize((224, 224)),

@@ -3,7 +3,10 @@ import torch
 
 @dataclass
 class VLMConfig:
+    data_root: str = "../data/A2_dataset/"
+
     num_gpus: int = 1
+    device: str = "cuda"
     llm_model_id: str = "Qwen/Qwen3-4B-Instruct-2507"
     vit_dim: int = 384
     expansion_factor: int = 2 
