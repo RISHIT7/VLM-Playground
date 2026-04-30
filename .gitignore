@@ -217,3 +217,5 @@ data/*
 /dump
 
 /weights
+checkpoints/
+outputs/
