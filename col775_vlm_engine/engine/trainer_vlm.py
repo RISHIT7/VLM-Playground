@@ -17,6 +17,15 @@ from utils.wandb_logger import WandbLogger
 
 logger = logging.getLogger(__name__)
 
+import torch
+
+# Disables the buggy cuDNN SDPA backend
+torch.backends.cuda.enable_cudnn_sdp(False)
+
+# (Optional) Ensure FlashAttention and Math backends are enabled
+torch.backends.cuda.enable_flash_sdp(True)
+torch.backends.cuda.enable_math_sdp(True)
+
 def setup_ddp(rank: int, world_size: int):
     """Initializes the Distributed Data Parallel process group."""
     os.environ['MASTER_ADDR'] = 'localhost'
@@ -53,11 +62,17 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
     
     llm = AutoModelForCausalLM.from_pretrained(
         cfg.llm_model_id, 
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map={"": device} if dtype == "auto" else None
     )
     if dtype != "auto":
         llm = llm.to(device)
+    llm.config.use_cache = False
+    if hasattr(llm, "generation_config"):
+        llm.generation_config.use_cache = False
+    llm.config.use_cache = False
+    if hasattr(llm, "generation_config"):
+        llm.generation_config.use_cache = False
     
     llm.gradient_checkpointing_enable()
 
@@ -114,7 +129,7 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
     total_steps = len(train_dl) * cfg.stage2_epochs // cfg.stage2_grad_accum
     warmup_steps = int(cfg.warmup_ratio * total_steps)
     scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
-    scaler = torch.cuda.amp.GradScaler(enabled=(dtype == torch.float16))
+    scaler = torch.amp.grad_scaler.GradScaler(enabled=(dtype == torch.float16))
 
     if is_main_process:
         wandb_logger = WandbLogger(project_name=cfg.wandb_project, config=cfg.__dict__, run_name=f"vlm-stage2-{cfg.num_gpus}gpu")
@@ -186,7 +201,7 @@ def train_vlm_stage2_launcher(cfg, vit_checkpoint_path: str, stage1_ckpt_path: s
 def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
     """
     The training loop for Stage 1 Core Alignment (Image Captioning).
-    Only the MLP Projector is trained. LLM and ViT are frozen[cite: 8].
+    Only the MLP Projector is trained. LLM and ViT are frozen.
     """
     is_multi_gpu = cfg.num_gpus > 1
     if is_multi_gpu:
@@ -215,12 +230,18 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
         
     llm = AutoModelForCausalLM.from_pretrained(
         cfg.llm_model_id, 
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map={"": device} if dtype == "auto" else None
     )
     if dtype != "auto":
         llm = llm.to(device)
     
+    if hasattr(llm, "generation_config"):
+        llm.generation_config.use_cache = False
+    if hasattr(llm, "config"):
+        llm.config.use_cache = False
+    if hasattr(llm, "generation_config"):
+        llm.generation_config.use_cache = False
     llm.requires_grad_(False)
     llm.gradient_checkpointing_enable()
 
@@ -277,7 +298,7 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
     
     # GradScaler only for CUDA
     use_scaler = (dtype == torch.float16 and device.type == "cuda")
-    scaler = torch.cuda.amp.GradScaler(enabled=use_scaler)
+    scaler = torch.amp.grad_scaler.GradScaler("cuda", enabled=use_scaler)
 
     if is_main_process:
         wandb_logger = WandbLogger(project_name=cfg.wandb_project, config=cfg.__dict__, run_name=f"vlm-stage1-{cfg.num_gpus}gpu")
@@ -301,7 +322,7 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
             # Use torch.amp.autocast for device-agnostic mixed precision
             autocast_device = "cuda" if device.type == "cuda" else "cpu"
             autocast_dtype = dtype if isinstance(dtype, torch.dtype) else torch.bfloat16
-            with torch.amp.autocast(device_type=autocast_device, dtype=autocast_dtype, enabled=(dtype != torch.float32)):
+            with torch.amp.autocast_mode.autocast(device_type=autocast_device, dtype=autocast_dtype, enabled=(dtype != torch.float32)):
                 outputs = model(images=images, input_ids=input_ids, attention_mask=attention_mask, labels=labels)
                 loss = outputs.loss / cfg.stage1_grad_accum
 

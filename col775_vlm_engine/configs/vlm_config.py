@@ -15,10 +15,10 @@ class VLMConfig:
     warmup_ratio: float = 0.03     
     
     # --- STAGE 1 TARGETS ---
-    stage1_epochs: int = 1
+    stage1_epochs: int = 2
     stage1_lr: float = 2e-3
     stage1_target_bs: int = 128
-    stage1_per_device_bs: int = 4  # (4 fits 16/24GB GPUs)
+    stage1_per_device_bs: int = 32  # (4 fits 16/24GB GPUs)
     
     # --- STAGE 2 TARGETS ---
     stage2_epochs: int = 3
@@ -29,10 +29,10 @@ class VLMConfig:
     lora_alpha: int = 32
     
     # Infrastructure
-    num_workers: int = 4
+    num_workers: int = 8
     wandb_project: str = "col775-a2-vlm"
     checkpoint_dir: str = "checkpoints/vlm"
-    log_every_n_steps: int = 5
+    log_every_n_steps: int = 1
 
     @property
     def stage1_grad_accum(self) -> int:

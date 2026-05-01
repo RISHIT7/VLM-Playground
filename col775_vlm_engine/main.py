@@ -137,7 +137,7 @@ def parse_args() -> argparse.Namespace:
                      help="Number of epochs for VLM training.")
     vlm.add_argument("--vlm-wandb-offline", action="store_true",
                      help="Run VLM training with W&B in offline mode.")
-    vlm.add_argument("--vlm-llm-id", type=str, default="Qwen/Qwen3-4B-Instruct-2507-FP8",
+    vlm.add_argument("--vlm-llm-id", type=str, default="Qwen/Qwen3-4B-Instruct-2507",
                      help="LLM ID for VLM training.")
 
     return p.parse_args()
@@ -262,7 +262,7 @@ def _run_vlm_stage1(args: argparse.Namespace) -> None:
 
     if args.vlm_epochs is not None: cfg.stage1_epochs = args.vlm_epochs
     if args.data_root is not None: cfg.data_root = args.data_root
-    if args.captions_json is not None: cfg.captions_json = args.captions_json
+    if args.captions_json is not None: setattr(cfg, "captions_json", args.captions_json)
     if args.vlm_llm_id is not None: cfg.llm_model_id = args.vlm_llm_id
 
     train_vlm_stage1_launcher(cfg, args.vlm_vit_ckpt)
@@ -291,7 +291,7 @@ def _run_vlm_stage2(args: argparse.Namespace) -> None:
 
     if args.vlm_epochs is not None: cfg.stage2_epochs = args.vlm_epochs
     if args.data_root is not None: cfg.data_root = args.data_root
-    if args.captions_json is not None: cfg.captions_json = args.captions_json
+    if args.captions_json is not None: setattr(cfg, "captions_json", args.captions_json)
     if args.vlm_llm_id is not None: cfg.llm_model_id = args.vlm_llm_id
 
     stage1_ckpt_path = cfg.checkpoint_dir + "/vlm_stage1_proj_ep1.pt" # Example path, should ideally be configurable
