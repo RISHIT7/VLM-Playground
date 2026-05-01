@@ -16,6 +16,7 @@ from models.vlm import VLMModel
 from models.vit_backbone import VisionTransformer
 from data.clevr_vlm_dataset import CLEVRCaptionDataset, CLEVRQADataset, VLMCollateFn
 from utils.wandb_logger import WandbLogger
+from engine.evaluator import evaluate_vlm_stage1, evaluate_vlm_stage2
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,10 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
         model = DDP(model, device_ids=[rank], find_unused_parameters=False)
 
     train_ds = CLEVRQADataset(cfg, split="train", tokenizer=tokenizer)
+    val_ds = CLEVRQADataset(cfg, split="val", tokenizer=tokenizer)
+    
     collate_fn = VLMCollateFn(tokenizer, mode="stage2")
+    val_collate_fn = VLMCollateFn(tokenizer, mode="eval_stage2")
     
     sampler = DistributedSampler(train_ds, num_replicas=cfg.num_gpus, rank=rank, shuffle=True) if is_multi_gpu else None
     
@@ -109,6 +113,12 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
         train_ds, batch_size=cfg.stage2_per_device_bs, 
         shuffle=(sampler is None), sampler=sampler,
         num_workers=cfg.num_workers, pin_memory=True, collate_fn=collate_fn, drop_last=True
+    )
+    
+    val_dl = DataLoader(
+        val_ds, batch_size=cfg.stage2_per_device_bs, 
+        shuffle=False, num_workers=cfg.num_workers, 
+        pin_memory=True, collate_fn=val_collate_fn, drop_last=False
     )
 
     trainable_params = [p for p in model.parameters() if p.requires_grad]
@@ -166,6 +176,14 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
             if is_main_process: pbar.set_postfix(loss=f"{outputs.loss.item():.4f}")
 
         if is_main_process:
+            # Validation
+            logger.info(f"[Stage 2] Starting validation for Epoch {epoch+1}...")
+            val_metrics = evaluate_vlm_stage2(model, val_dl, device, tokenizer)
+            logger.info(f"[Stage 2] Epoch {epoch+1} Val Exact-Match: {val_metrics['exact_match']:.4f}")
+            wandb_logger.log_metrics({
+                "stage2/val_exact_match": val_metrics["exact_match"],
+            }, step=global_step)
+            
             os.makedirs(cfg.checkpoint_dir, exist_ok=True)
             
             unwrapped_model = model.module if hasattr(model, "module") else model
@@ -264,7 +282,10 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
         model = DDP(model, device_ids=[rank], find_unused_parameters=False)
 
     train_ds = CLEVRCaptionDataset(cfg, split="train", tokenizer=tokenizer)
+    val_ds = CLEVRCaptionDataset(cfg, split="val", tokenizer=tokenizer)
+    
     collate_fn = VLMCollateFn(tokenizer, mode="stage1")
+    val_collate_fn = VLMCollateFn(tokenizer, mode="eval_stage1")
     
     sampler = DistributedSampler(train_ds, num_replicas=cfg.num_gpus, rank=rank, shuffle=True) if is_multi_gpu else None
     
@@ -272,6 +293,12 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
         train_ds, batch_size=cfg.stage1_per_device_bs, 
         shuffle=(sampler is None), sampler=sampler,
         num_workers=cfg.num_workers, pin_memory=True, collate_fn=collate_fn, drop_last=True
+    )
+    
+    val_dl = DataLoader(
+        val_ds, batch_size=cfg.stage1_per_device_bs, 
+        shuffle=False, num_workers=cfg.num_workers, 
+        pin_memory=True, collate_fn=val_collate_fn, drop_last=False
     )
 
     trainable_params = [p for p in model.parameters() if p.requires_grad]
@@ -333,6 +360,15 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
             if is_main_process: pbar.set_postfix(loss=f"{outputs.loss.item():.4f}")
 
         if is_main_process:
+            # Validation
+            logger.info(f"[Stage 1] Starting validation for Epoch {epoch+1}...")
+            val_metrics = evaluate_vlm_stage1(model, val_dl, device, tokenizer)
+            logger.info(f"[Stage 1] Epoch {epoch+1} Val BLEU: {val_metrics['bleu']:.4f} | Exact-Match: {val_metrics.get('exact_match', 0.0):.4f}")
+            wandb_logger.log_metrics({
+                "stage1/val_bleu": val_metrics["bleu"],
+                "stage1/val_exact_match": val_metrics.get("exact_match", 0.0),
+            }, step=global_step)
+            
             os.makedirs(cfg.checkpoint_dir, exist_ok=True)
             unwrapped_model = model.module if hasattr(model, "module") else model
             
@@ -355,3 +391,87 @@ def train_vlm_stage1_launcher(cfg, vit_checkpoint_path: str):
         mp.spawn(stage1_worker, nprocs=cfg.num_gpus, args=(cfg, vit_checkpoint_path))
     else:
         stage1_worker(0, cfg, vit_checkpoint_path)
+
+def eval_vlm_launcher(cfg, stage: int, ckpt_path: str, vit_checkpoint_path: str = None):
+    device = torch.device(cfg.device if hasattr(cfg, 'device') else "cuda")
+    logger.info(f"[VLM Eval] Starting evaluation for Stage {stage} on {device}")
+    
+    if "FP8" in cfg.llm_model_id.upper() or "INT8" in cfg.llm_model_id.upper():
+        dtype = "auto"
+    elif device.type == "cuda":
+        dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    else:
+        dtype = torch.float32
+        
+    max_seq_length = 2048
+    
+    if stage == 1:
+        llm, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=cfg.llm_model_id,
+            max_seq_length=max_seq_length,
+            dtype=dtype,
+            load_in_4bit=False,
+        )
+        if dtype != "auto": llm = llm.to(device)
+        llm.requires_grad_(False)
+        
+        vision_encoder = VisionTransformer(img_size=224, patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_dim=1536)
+        if vit_checkpoint_path and os.path.exists(vit_checkpoint_path):
+            ckpt = torch.load(vit_checkpoint_path, map_location="cpu")
+            full_state = ckpt.get('model_state', ckpt)
+            state_dict = {k.replace("vit_backbone.", ""): v for k, v in full_state.items() if k.startswith("vit_backbone.")}
+            vision_encoder.load_state_dict(state_dict, strict=False)
+        vision_encoder = vision_encoder.to(device)
+        vision_encoder.requires_grad_(False)
+        
+        model = VLMModel(vision_encoder, llm, img_placeholder_id=-200, expansion_factor=cfg.expansion_factor).to(device)
+        
+        logger.info(f"[VLM Eval] Loading Stage 1 Projector from {ckpt_path}")
+        proj_ckpt = torch.load(ckpt_path, map_location=device)
+        if 'projector_state_dict' in proj_ckpt:
+            model.projector.load_state_dict(proj_ckpt['projector_state_dict'])
+        else:
+            model.projector.load_state_dict(proj_ckpt)
+            
+        val_ds = CLEVRCaptionDataset(cfg, split="val", tokenizer=tokenizer)
+        val_collate_fn = VLMCollateFn(tokenizer, mode="eval_stage1")
+        val_dl = DataLoader(val_ds, batch_size=cfg.stage1_per_device_bs, shuffle=False, num_workers=cfg.num_workers, collate_fn=val_collate_fn)
+        
+        val_metrics = evaluate_vlm_stage1(model, val_dl, device, tokenizer)
+        logger.info(f"[VLM Eval] Stage 1 Val BLEU: {val_metrics['bleu']:.4f} | Exact-Match: {val_metrics.get('exact_match', 0.0):.4f}")
+
+    elif stage == 2:
+        logger.info(f"[VLM Eval] Loading LLM with LoRA from {ckpt_path}")
+        llm, tokenizer = FastLanguageModel.from_pretrained(
+            model_name=ckpt_path, 
+            max_seq_length=max_seq_length,
+            dtype=dtype,
+            load_in_4bit=False,
+        )
+        if dtype != "auto": llm = llm.to(device)
+        FastLanguageModel.for_inference(llm) 
+        
+        vision_encoder = VisionTransformer(img_size=224, patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_dim=1536)
+        if vit_checkpoint_path and os.path.exists(vit_checkpoint_path):
+            ckpt = torch.load(vit_checkpoint_path, map_location="cpu")
+            full_state = ckpt.get('model_state', ckpt)
+            state_dict = {k.replace("vit_backbone.", ""): v for k, v in full_state.items() if k.startswith("vit_backbone.")}
+            vision_encoder.load_state_dict(state_dict, strict=False)
+        vision_encoder = vision_encoder.to(device)
+        vision_encoder.requires_grad_(False)
+        
+        model = VLMModel(vision_encoder, llm, img_placeholder_id=(tokenizer.unk_token_id or 0), expansion_factor=cfg.expansion_factor).to(device)
+        
+        proj_path = ckpt_path.replace("_lora_", "_proj_") + ".pt"
+        if os.path.exists(proj_path):
+            logger.info(f"[VLM Eval] Loading Projector from {proj_path}")
+            model.projector.load_state_dict(torch.load(proj_path, map_location=device))
+        else:
+            logger.warning(f"[VLM Eval] Projector path not found at {proj_path}")
+            
+        val_ds = CLEVRQADataset(cfg, split="val", tokenizer=tokenizer)
+        val_collate_fn = VLMCollateFn(tokenizer, mode="eval_stage2")
+        val_dl = DataLoader(val_ds, batch_size=cfg.stage2_per_device_bs, shuffle=False, num_workers=cfg.num_workers, collate_fn=val_collate_fn)
+        
+        val_metrics = evaluate_vlm_stage2(model, val_dl, device, tokenizer)
+        logger.info(f"[VLM Eval] Stage 2 Val Exact-Match: {val_metrics['exact_match']:.4f}")
