@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -65,7 +66,9 @@ def load_clip_model(ckpt_path, device):
 @torch.no_grad()
 def embed_validation_set(model, dataloader, device):
     all_img_feats, all_txt_feats, all_captions = [], [], []
-    for batch in dataloader:
+    
+    pbar = tqdm(dataloader, desc="Embedding Val Set", leave=False)
+    for batch in pbar:
         images = batch["images"].to(device)
         tokens = batch["tokens"].to(device)
         masks = batch["padding_mask"].to(device)

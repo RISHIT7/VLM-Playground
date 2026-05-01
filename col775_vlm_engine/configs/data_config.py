@@ -3,6 +3,7 @@ from typing import Optional
 from pathlib import Path
 import os
 
+
 @dataclass
 class EnvConfig:
     env_name: str
@@ -62,6 +63,17 @@ def get_config(env: str = "local") -> EnvConfig:
             base_dir_part_aa="/scratch/scai/phd/aiz228170/COL775-A2-2026/dataset/A2_dataset/Part_Aa",
             batch_size=256,
             num_workers=8,
+            pin_memory=True,
+            prefetch_factor=2,
+            drop_last=True,
+        )
+    elif env == "modal":
+        return EnvConfig(
+            env_name="modal",
+            base_dir_part_a="/data/A2_dataset/Part_A",
+            base_dir_part_aa="/data/A2_dataset/Part_Aa",
+            batch_size=128,
+            num_workers=6,
             pin_memory=True,
             prefetch_factor=2,
             drop_last=True,

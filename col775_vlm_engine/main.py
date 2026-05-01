@@ -109,7 +109,7 @@ def parse_args() -> argparse.Namespace:
     probe.add_argument("--probe-dino-ckpt",     type=str, default=None,
                        help="Path to trained DINO checkpoint for probing.")
     probe.add_argument("--probe-backbone",      type=str, default=None,
-                       choices=["clip", "dino", "dino_teacher"],
+                       choices=["clip", "dino", "dino_teacher"], nargs="+",
                        help="Run probe for a single backbone (default: all three).")
     probe.add_argument("--probe-repr",          type=str, default=None,
                        choices=["cls", "gap"],
@@ -214,7 +214,7 @@ def _run_linear_probe(args: argparse.Namespace) -> None:
         train_linear_probe(cfg)
     else:
         # Run all 12 combinations (or a filtered subset)
-        backbones = [args.probe_backbone] if args.probe_backbone else ["clip", "dino", "dino_teacher"]
+        backbones = args.probe_backbone if args.probe_backbone else ["clip", "dino", "dino_teacher"]
         representations = [args.probe_repr] if args.probe_repr else ["cls", "gap"]
         tasks = [args.probe_task] if args.probe_task else ["count", "color"]
 

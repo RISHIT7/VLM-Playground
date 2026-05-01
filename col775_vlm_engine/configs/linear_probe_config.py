@@ -24,12 +24,12 @@ class LinearProbeConfig:
     dino_use_bn_in_head: bool = False
 
     # Task-specific
-    num_count_classes: int = 10     # 0..9 objects (or adjust to dataset)
+    num_count_classes: int = 11     # 0..10 objects (or adjust to dataset)
     num_color_classes: int = 8      # CLEVR has 8 colours
 
     # Pretrained checkpoint paths
-    clip_checkpoint: Optional[str] = None
-    dino_checkpoint: Optional[str] = None
+    clip_checkpoint: Optional[str] = "checkpoints/clip/checkpoint_best.pt"
+    dino_checkpoint: Optional[str] = "checkpoints/dino/checkpoint_best.pt"
 
     # Optimisation
     lr: float = 1e-3
@@ -38,9 +38,10 @@ class LinearProbeConfig:
     batch_size: int = 256           # overrides env batch_size if set
 
     # Environment
-    env: str = "local_omen"
+    env: str = "modal"
 
     # Checkpointing
+    resume: bool = True
     checkpoint_dir: str = "checkpoints/linear_probe"
     resume_checkpoint: Optional[str] = None
 

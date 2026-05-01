@@ -4,6 +4,7 @@ from typing import Dict, Tuple
 import torch
 from torch.utils.data import DataLoader
 from sklearn.metrics import f1_score
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,8 @@ def evaluate_clip_retrieval(
     all_txt_feats = []
     all_captions = []
 
-    for batch in dataloader:
+    pbar = tqdm(dataloader, desc="CLIP Retrieval Evaluation", leave=False)
+    for batch in pbar:
         images = batch["images"].to(device)
         tokens = batch["tokens"].to(device)
         masks = batch["padding_mask"].to(device)
@@ -117,7 +119,8 @@ def evaluate_dino_val_loss(
     total_loss = 0.0
     n_batches = 0
 
-    for batch in dataloader:
+    pbar = tqdm(dataloader, desc="DINO Val Loss Eval", leave=False)
+    for batch in pbar:
         global_crops = batch["global_crops"].to(device)
         local_crops = batch["local_crops"].to(device)
 
@@ -127,6 +130,8 @@ def evaluate_dino_val_loss(
         loss = model.compute_loss(student_out, teacher_out, student_temp, teacher_temp)
         total_loss += loss.item()
         n_batches += 1
+        
+        pbar.set_postfix(val_loss=f"{loss.item():.4f}")
 
     avg_loss = total_loss / max(1, n_batches)
     return {"val_loss": avg_loss}
@@ -161,7 +166,8 @@ def extract_features(
     all_counts = []
     all_colors = []
 
-    for batch in dataloader:
+    pbar = tqdm(dataloader, desc=f"Extracting Features ({representation})", leave=False)
+    for batch in pbar:
         images = batch["images"].to(device)
         count_labels = batch["count_labels"]
         color_labels = (
@@ -223,7 +229,8 @@ def evaluate_linear_probe(
     all_preds = []
 
     with torch.no_grad():
-        for start in range(0, N, batch_size):
+        pbar = tqdm(range(0, N, batch_size), desc=f"Evaluating Probe ({task})", leave=False)
+        for start in pbar:
             end = min(start + batch_size, N)
             feats_b = features[start:end].to(device)
             logits = probe(feats_b)
