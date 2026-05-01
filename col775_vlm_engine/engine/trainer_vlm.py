@@ -9,6 +9,8 @@ from tqdm import tqdm
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, get_cosine_schedule_with_warmup
 from peft import LoraConfig, get_peft_model
+from transformers import get_cosine_schedule_with_warmup
+from unsloth import FastLanguageModel
 
 from models.vlm import VLMModel
 from models.vit_backbone import VisionTransformer
@@ -42,24 +44,21 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
     if is_main_process:
         logger.info(f"[Stage 2] Initializing on {cfg.num_gpus} GPU(s)...")
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.llm_model_id)
-    if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
-
     # Detect if we should use the model's native dtype (e.g., for FP8 or pre-quantized models)
     if "FP8" in cfg.llm_model_id.upper() or "INT8" in cfg.llm_model_id.upper():
         dtype = "auto"
     else:
         dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
     
-    llm = AutoModelForCausalLM.from_pretrained(
-        cfg.llm_model_id, 
-        torch_dtype=dtype,
-        device_map={"": device} if dtype == "auto" else None
+    max_seq_length = 2048 # Define a safe max sequence length
+    llm, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=cfg.llm_model_id,
+        max_seq_length=max_seq_length,
+        dtype=dtype,
+        load_in_4bit=False, # Set to True if you ever want extreme VRAM savings
     )
     if dtype != "auto":
         llm = llm.to(device)
-    
-    llm.gradient_checkpointing_enable()
 
     vision_encoder = VisionTransformer(img_size=224, patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_dim=1536)
     
@@ -74,12 +73,16 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
     vision_encoder = vision_encoder.to(device)
     vision_encoder.requires_grad_(False)
 
-    lora_config = LoraConfig(
-        r=cfg.lora_rank, lora_alpha=cfg.lora_alpha,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"], 
-        bias="none", task_type="CAUSAL_LM"
+    # Unsloth's optimized LoRA injection
+    llm = FastLanguageModel.get_peft_model(
+        llm,
+        r=cfg.lora_rank,
+        lora_alpha=cfg.lora_alpha,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        bias="none",
+        use_gradient_checkpointing="unsloth", # <-- This is the magic Unsloth VRAM saver
+        random_state=42,
     )
-    llm = get_peft_model(llm, lora_config)
     
     if is_main_process: llm.print_trainable_parameters()
 
@@ -167,8 +170,12 @@ def stage2_worker(rank: int, cfg, vit_checkpoint_path: str, stage1_ckpt_path: st
             
             unwrapped_model = model.module if hasattr(model, "module") else model
             
+            # Save Projector
             torch.save(unwrapped_model.projector.state_dict(), os.path.join(cfg.checkpoint_dir, f"vlm_stage2_proj_ep{epoch+1}.pt"))
-            unwrapped_model.llm.save_pretrained(os.path.join(cfg.checkpoint_dir, f"vlm_stage2_lora_ep{epoch+1}"))
+            
+            # Save Unsloth LoRA Adapters
+            lora_path = os.path.join(cfg.checkpoint_dir, f"vlm_stage2_lora_ep{epoch+1}")
+            unwrapped_model.llm.save_pretrained(lora_path) # Unsloth safely patches this
 
     if is_multi_gpu: cleanup_ddp()
     if is_main_process: wandb_logger.finish()
@@ -200,9 +207,6 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
     if is_main_process:
         logger.info(f"[Stage 1] Initializing Core Alignment on {cfg.num_gpus} GPU(s)...")
 
-    tokenizer = AutoTokenizer.from_pretrained(cfg.llm_model_id)
-    if tokenizer.pad_token is None: tokenizer.pad_token = tokenizer.eos_token
-
     # Determine dtype based on device
     if "FP8" in cfg.llm_model_id.upper() or "INT8" in cfg.llm_model_id.upper():
         dtype = "auto"
@@ -213,16 +217,18 @@ def stage1_worker(rank: int, cfg, vit_checkpoint_path: str):
     else:
         dtype = torch.float32 # CPU fallback
         
-    llm = AutoModelForCausalLM.from_pretrained(
-        cfg.llm_model_id, 
-        torch_dtype=dtype,
-        device_map={"": device} if dtype == "auto" else None
+    max_seq_length = 2048
+    llm, tokenizer = FastLanguageModel.from_pretrained(
+        model_name=cfg.llm_model_id,
+        max_seq_length=max_seq_length,
+        dtype=dtype,
+        load_in_4bit=False, 
     )
     if dtype != "auto":
         llm = llm.to(device)
     
     llm.requires_grad_(False)
-    llm.gradient_checkpointing_enable()
+    llm.gradient_checkpointing_enable() # Standard HF checkpointing for frozen models
 
     vision_encoder = VisionTransformer(img_size=224, patch_size=16, embed_dim=384, depth=12, num_heads=6, mlp_dim=1536)
     
