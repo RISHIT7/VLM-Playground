@@ -14,7 +14,7 @@ class CLEVRCaptionDataset(Dataset):
         self.tokenizer = tokenizer
         
         self.base_dir = self.config.data_root
-        self.json_path = os.path.join(self.config.captions_json, f"clevr_{split}_captions.json") # os.path.join(self.base_dir, "Part_Aa", f"clevr_{split}_captions.json")
+        self.json_path = os.path.join(self.base_dir, "Part_Aa", f"clevr_{split}_captions.json")
         self.image_dir = os.path.join(self.base_dir, "Part_Aa", "Clevr_official", "images", split)
         
         with open(self.json_path, "r") as f:
@@ -59,7 +59,6 @@ class CLEVRQADataset(Dataset):
         self.split = split
         self.transform = transform
         self.tokenizer = tokenizer
-
         self.base_dir = self.config.data_root
         self.questions_path = os.path.join(
             self.base_dir,
@@ -191,25 +190,27 @@ class VLMCollateFn:
         newline_token = self.tokenizer("\n", return_tensors="pt", add_special_tokens=False).input_ids.squeeze(0)
         
         for item in batch:
-            if self.mode == "stage1":
+            if self.mode == "stage1" or self.mode == "eval_stage1":
                 base_prompt = "Describe this image in detail."
                 caption = item["caption"]
                 
                 prompt_tokens = self.tokenizer(base_prompt, return_tensors="pt", add_special_tokens=False).input_ids.squeeze(0)
                 target_tokens = self.tokenizer(f" {caption}{self.tokenizer.eos_token}", return_tensors="pt", add_special_tokens=False).input_ids.squeeze(0)
                 
-                # 50% chance to swap Image and Prompt order for robustness [X_vis, X_text] or [X_text, X_vis]
-                if random.random() < 0.5:
+                if random.random() < 0.5 and self.mode != "eval_stage1":
                     context_ids = torch.cat([img_pad, newline_token, prompt_tokens])
                 else:
                     context_ids = torch.cat([prompt_tokens, newline_token, img_pad])
                     
-                input_ids = torch.cat([context_ids, target_tokens])
-                labels = input_ids.clone()
+                if self.mode == "eval_stage1":
+                    input_ids = context_ids
+                    labels = target_tokens
+                else:
+                    input_ids = torch.cat([context_ids, target_tokens])
+                    labels = input_ids.clone()
+                    labels[:len(context_ids)] = -100
                 
-                labels[:len(context_ids)] = -100
-                
-            elif self.mode == "stage2":
+            elif self.mode == "stage2" or self.mode == "eval_stage2":
                 question = item["prompt_text"]
                 explanation = item.get("explanation", "")
                 answer = item["target_text"]
@@ -220,13 +221,15 @@ class VLMCollateFn:
                 prompt_tokens = self.tokenizer(prompt_str, return_tensors="pt", add_special_tokens=False).input_ids.squeeze(0)
                 target_tokens = self.tokenizer(target_str, return_tensors="pt", add_special_tokens=False).input_ids.squeeze(0)
                 
-                # In Stage 2, keeping the image at the start is standard practice [X_vis, X_text]
                 context_ids = torch.cat([img_pad, newline_token, prompt_tokens])
                 
-                input_ids = torch.cat([context_ids, target_tokens])
-                labels = input_ids.clone()
-                
-                labels[:len(context_ids)] = -100
+                if self.mode == "eval_stage2":
+                    input_ids = context_ids
+                    labels = target_tokens # Just storing the target to compute metrics later
+                else:
+                    input_ids = torch.cat([context_ids, target_tokens])
+                    labels = input_ids.clone()
+                    labels[:len(context_ids)] = -100
             
             input_ids_list.append(input_ids)
             labels_list.append(labels)
@@ -237,7 +240,10 @@ class VLMCollateFn:
         labels_batched = torch.nn.utils.rnn.pad_sequence(
             labels_list, batch_first=True, padding_value=-100
         )
-        attention_mask = (input_ids_batched != self.pad_token_id).long()
+        attention_mask_list = [torch.ones_like(ids) for ids in input_ids_list]
+        attention_mask = torch.nn.utils.rnn.pad_sequence(
+            attention_mask_list, batch_first=True, padding_value=0
+        )
         
         return {
             "images": images,

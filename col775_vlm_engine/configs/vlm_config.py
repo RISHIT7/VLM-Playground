@@ -4,6 +4,7 @@ import torch
 @dataclass
 class VLMConfig:
     data_root: str = "../data/A2_dataset/"
+    captions_json: str = ""
 
     num_gpus: int = 1
     device: str = "cuda"

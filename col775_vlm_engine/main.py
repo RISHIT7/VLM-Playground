@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument(
         "--mode", required=True,
-        choices=["clip", "dino", "both", "linear_probe", "vlm_stage1", "vlm_stage2"],
+        choices=["clip", "dino", "both", "linear_probe", "vlm_stage1", "vlm_stage2", "vlm_eval"],
         help="Which model(s) to train or evaluate.",
     )
 
@@ -139,6 +139,12 @@ def parse_args() -> argparse.Namespace:
                      help="Run VLM training with W&B in offline mode.")
     vlm.add_argument("--vlm-llm-id", type=str, default="Qwen/Qwen3-4B-Instruct-2507",
                      help="LLM ID for VLM training.")
+    vlm.add_argument("--vlm-eval-stage", type=int, choices=[1, 2], default=2,
+                     help="Stage to evaluate.")
+    vlm.add_argument("--vlm-eval-ckpt", type=str, default="checkpoints/vlm/vlm_stage2_lora_ep3",
+                     help="Path to the trained checkpoint to evaluate.")
+    vlm.add_argument("--vlm-stage1-ckpt", type=str, default="checkpoints/vlm/vlm_stage1_proj_ep1.pt",
+                     help="Path to the stage 1 checkpoint to use for stage 2 training.")
 
     return p.parse_args()
 
@@ -294,8 +300,21 @@ def _run_vlm_stage2(args: argparse.Namespace) -> None:
     if args.captions_json is not None: setattr(cfg, "captions_json", args.captions_json)
     if args.vlm_llm_id is not None: cfg.llm_model_id = args.vlm_llm_id
 
-    stage1_ckpt_path = cfg.checkpoint_dir + "/vlm_stage1_proj_ep1.pt" # Example path, should ideally be configurable
+    stage1_ckpt_path = args.vlm_stage1_ckpt
     train_vlm_stage2_launcher(cfg, args.vlm_vit_ckpt, stage1_ckpt_path)
+
+def _run_vlm_eval(args: argparse.Namespace) -> None:
+    from configs.vlm_config import VLMConfig
+    from engine.trainer_vlm import eval_vlm_launcher
+    cfg = VLMConfig(device=args.vlm_device, num_gpus=args.num_gpus)
+    if args.vlm_batch_size is not None:
+        cfg.stage1_per_device_bs = args.vlm_batch_size
+        cfg.stage2_per_device_bs = args.vlm_batch_size
+    if args.data_root is not None: cfg.data_root = args.data_root
+    if args.captions_json is not None: cfg.captions_json = args.captions_json
+    if args.vlm_llm_id is not None: cfg.llm_model_id = args.vlm_llm_id
+
+    eval_vlm_launcher(cfg, args.vlm_eval_stage, args.vlm_eval_ckpt, args.vlm_vit_ckpt)
 
 def main() -> None:
     args = parse_args()
@@ -334,6 +353,9 @@ def main() -> None:
 
     if mode == "vlm_stage2":
         _run_vlm_stage2(args)
+        
+    if mode == "vlm_eval":
+        _run_vlm_eval(args)
 
 
 if __name__ == "__main__":
