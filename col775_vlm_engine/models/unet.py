@@ -3,7 +3,7 @@ import torch.nn as nn
 import math
 from einops import rearrange
 
-class SinusoidalTimestepEmbedding(nn.Module):
+class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
         super().__init__()
         self.dim = dim
@@ -35,7 +35,7 @@ class CrossAttention(nn.Module):
         q = self.to_q(x)
         k = self.to_k(context)
         v = self.to_v(context)
-        
+        # Reshape using einops for clarity and safety
         q = rearrange(q, 'b n (h d) -> b h n d', h=h)
         k = rearrange(k, 'b l (h d) -> b h l d', h=h)
         v = rearrange(v, 'b l (h d) -> b h l d', h=h)
@@ -80,7 +80,7 @@ class SpatialTransformer(nn.Module):
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
         return x + x_in
 
-class ResBlockWithTime(nn.Module):
+class ResBlockLDM(nn.Module):
     def __init__(self, in_ch, out_ch, time_emb_dim=None, context_dim=None, use_attention=False, heads=8):
         super().__init__()
         self.norm1 = nn.GroupNorm(32, in_ch)
@@ -105,69 +105,61 @@ class ResBlockWithTime(nn.Module):
             out = self.attn(out, context=context)
         return out
 
-class ConditionalUNet(nn.Module):
-    def __init__(self, in_channels=4, out_channels=4, base_ch=128, time_dim=256, context_dim=512, heads=8):
+class UNetLDM(nn.Module):
+    def __init__(self, in_channels=4, out_channels=4, base_ch=128,
+                 time_dim=256, context_dim=512, heads=8):
         super().__init__()
+        
         self.time_mlp = nn.Sequential(
-            SinusoidalTimestepEmbedding(time_dim),
+            SinusoidalPosEmb(time_dim),
             nn.Linear(time_dim, time_dim * 4),
             nn.SiLU(),
             nn.Linear(time_dim * 4, time_dim)
         )
+        
         self.conv_in = nn.Conv2d(in_channels, base_ch, 3, padding=1)
 
-        # Down stages
-        self.down1_blocks = nn.Sequential(
-            ResBlockWithTime(base_ch, base_ch, time_dim, context_dim, use_attention=False),
-            ResBlockWithTime(base_ch, base_ch, time_dim, context_dim, use_attention=False)
-        )
+        # ---- Down path ----
+        self.down1_block1 = ResBlockLDM(base_ch, base_ch, time_dim, context_dim, False)
+        self.down1_block2 = ResBlockLDM(base_ch, base_ch, time_dim, context_dim, False)
         self.down1_down = nn.Conv2d(base_ch, base_ch * 2, 4, stride=2, padding=1)
 
-        self.down2_blocks = nn.Sequential(
-            ResBlockWithTime(base_ch * 2, base_ch * 2, time_dim, context_dim, use_attention=False),
-            ResBlockWithTime(base_ch * 2, base_ch * 2, time_dim, context_dim, use_attention=False)
-        )
+        self.down2_block1 = ResBlockLDM(base_ch * 2, base_ch * 2, time_dim, context_dim, False)
+        self.down2_block2 = ResBlockLDM(base_ch * 2, base_ch * 2, time_dim, context_dim, False)
         self.down2_down = nn.Conv2d(base_ch * 2, base_ch * 4, 4, stride=2, padding=1)
 
-        self.down3_blocks = nn.Sequential(
-            ResBlockWithTime(base_ch * 4, base_ch * 4, time_dim, context_dim, use_attention=True, heads=heads),
-            ResBlockWithTime(base_ch * 4, base_ch * 4, time_dim, context_dim, use_attention=True, heads=heads)
-        )
+        self.down3_block1 = ResBlockLDM(base_ch * 4, base_ch * 4, time_dim, context_dim, True, heads)
+        self.down3_block2 = ResBlockLDM(base_ch * 4, base_ch * 4, time_dim, context_dim, True, heads)
         self.down3_down = nn.Conv2d(base_ch * 4, base_ch * 8, 4, stride=2, padding=1)
 
-        # Mid
-        self.mid_blocks = nn.Sequential(
-            ResBlockWithTime(base_ch * 8, base_ch * 8, time_dim, context_dim, use_attention=True, heads=heads),
-            ResBlockWithTime(base_ch * 8, base_ch * 8, time_dim, context_dim, use_attention=True, heads=heads)
-        )
+        # ---- Mid path ----
+        self.mid_block1 = ResBlockLDM(base_ch * 8, base_ch * 8, time_dim, context_dim, True, heads)
+        self.mid_block2 = ResBlockLDM(base_ch * 8, base_ch * 8, time_dim, context_dim, False)
 
-        # Up stages
+        # ---- Up path (Concatenating previous layer + skip layer) ----
         self.up3_up = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='nearest'),
             nn.Conv2d(base_ch * 8, base_ch * 4, 3, padding=1)
         )
-        self.up3_blocks = nn.Sequential(
-            ResBlockWithTime(base_ch * 4, base_ch * 4, time_dim, context_dim, use_attention=True, heads=heads),
-            ResBlockWithTime(base_ch * 4, base_ch * 4, time_dim, context_dim, use_attention=True, heads=heads)
-        )
+        # 4 (from up3_up) + 4 (from skip3) = 8 in_channels
+        self.up3_block1 = ResBlockLDM(base_ch * 8, base_ch * 4, time_dim, context_dim, True, heads)
+        self.up3_block2 = ResBlockLDM(base_ch * 4, base_ch * 4, time_dim, context_dim, True, heads)
 
         self.up2_up = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='nearest'),
             nn.Conv2d(base_ch * 4, base_ch * 2, 3, padding=1)
         )
-        self.up2_blocks = nn.Sequential(
-            ResBlockWithTime(base_ch * 2, base_ch * 2, time_dim, context_dim, use_attention=False),
-            ResBlockWithTime(base_ch * 2, base_ch * 2, time_dim, context_dim, use_attention=False)
-        )
+        # 2 (from up2_up) + 2 (from skip2) = 4 in_channels
+        self.up2_block1 = ResBlockLDM(base_ch * 4, base_ch * 2, time_dim, context_dim, False)
+        self.up2_block2 = ResBlockLDM(base_ch * 2, base_ch * 2, time_dim, context_dim, False)
 
         self.up1_up = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='nearest'),
             nn.Conv2d(base_ch * 2, base_ch, 3, padding=1)
         )
-        self.up1_blocks = nn.Sequential(
-            ResBlockWithTime(base_ch, base_ch, time_dim, context_dim, use_attention=False),
-            ResBlockWithTime(base_ch, base_ch, time_dim, context_dim, use_attention=False)
-        )
+        # 1 (from up1_up) + 1 (from skip1) = 2 in_channels
+        self.up1_block1 = ResBlockLDM(base_ch * 2, base_ch, time_dim, context_dim, False)
+        self.up1_block2 = ResBlockLDM(base_ch, base_ch, time_dim, context_dim, False)
 
         self.conv_out = nn.Sequential(
             nn.GroupNorm(32, base_ch),
@@ -179,34 +171,38 @@ class ConditionalUNet(nn.Module):
         t_emb = self.time_mlp(t)
         x = self.conv_in(z)
 
-        # Down
-        x = self.down1_blocks[0](x, t_emb, context)
-        x = self.down1_blocks[1](x, t_emb, context)
+        x = self.down1_block1(x, t_emb, context)
+        x = self.down1_block2(x, t_emb, context)
+        skip1 = x
         x = self.down1_down(x)
 
-        x = self.down2_blocks[0](x, t_emb, context)
-        x = self.down2_blocks[1](x, t_emb, context)
+        x = self.down2_block1(x, t_emb, context)
+        x = self.down2_block2(x, t_emb, context)
+        skip2 = x
         x = self.down2_down(x)
 
-        x = self.down3_blocks[0](x, t_emb, context)
-        x = self.down3_blocks[1](x, t_emb, context)
+        x = self.down3_block1(x, t_emb, context)
+        x = self.down3_block2(x, t_emb, context)
+        skip3 = x
         x = self.down3_down(x)
 
-        # Mid
-        x = self.mid_blocks[0](x, t_emb, context)
-        x = self.mid_blocks[1](x, t_emb, context)
+        x = self.mid_block1(x, t_emb, context)
+        x = self.mid_block2(x, t_emb, context)
 
-        # Up
         x = self.up3_up(x)
-        x = self.up3_blocks[0](x, t_emb, context)
-        x = self.up3_blocks[1](x, t_emb, context)
+        x = torch.cat([x, skip3], dim=1) # Concatenation
+        x = self.up3_block1(x, t_emb, context)
+        x = self.up3_block2(x, t_emb, context)
 
         x = self.up2_up(x)
-        x = self.up2_blocks[0](x, t_emb, context)
-        x = self.up2_blocks[1](x, t_emb, context)
+        x = torch.cat([x, skip2], dim=1)
+        x = self.up2_block1(x, t_emb, context)
+        x = self.up2_block2(x, t_emb, context)
 
         x = self.up1_up(x)
-        x = self.up1_blocks[0](x, t_emb, context)
-        x = self.up1_blocks[1](x, t_emb, context)
+        x = torch.cat([x, skip1], dim=1)
+        x = self.up1_block1(x, t_emb, context)
+        x = self.up1_block2(x, t_emb, context)
 
         return self.conv_out(x)
+

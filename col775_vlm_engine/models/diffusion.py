@@ -1,69 +1,70 @@
 import torch
 import math
 
+def cosine_beta_schedule(timesteps, s=0.008):
+    steps = timesteps + 1
+    x = torch.linspace(0, timesteps, steps)
+    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
+    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
+    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
+    return torch.clip(betas, 0.0001, 0.9999)
+
 class DiffusionSchedule:
-    """Noise schedule (cosine or linear) + forward diffusion q(z_t | z_0)."""
-    def __init__(self, timesteps=1000, s=0.008, device='cpu'):
+    def __init__(self, timesteps=500, device='cpu'):
         self.timesteps = timesteps
         self.device = device
-        
-        steps = timesteps + 1
-        x = torch.linspace(0, timesteps, steps, device=device)
-        alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
-        alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-        self.betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-        self.betas = torch.clip(self.betas, 0.0001, 0.9999)
-        
+        self.betas = cosine_beta_schedule(timesteps).to(device)
         self.alphas = 1. - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
         self.sqrt_alphas_cumprod = torch.sqrt(self.alphas_cumprod)
         self.sqrt_one_minus_alphas_cumprod = torch.sqrt(1. - self.alphas_cumprod)
 
-    def extract(self, a, t, x_shape):
-        b, *_ = t.shape
-        out = a.gather(-1, t)
-        return out.reshape(b, *((1,) * (len(x_shape) - 1)))
-
-    def q_sample(self, x_start, t, noise=None):
+    def q_sample(self, x0, t, noise=None):
         if noise is None:
-            noise = torch.randn_like(x_start)
-        sqrt_alphas_cumprod_t = self.extract(self.sqrt_alphas_cumprod, t, x_start.shape)
-        sqrt_one_minus_alphas_cumprod_t = self.extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape)
-        return sqrt_alphas_cumprod_t * x_start + sqrt_one_minus_alphas_cumprod_t * noise
+            noise = torch.randn_like(x0)
+        sqrt_alpha_cumprod_t = self.sqrt_alphas_cumprod[t].view(-1,1,1,1)
+        sqrt_one_minus_t = self.sqrt_one_minus_alphas_cumprod[t].view(-1,1,1,1)
+        return sqrt_alpha_cumprod_t * x0 + sqrt_one_minus_t * noise
 
 class DDPMSampler:
-    """DDPM reverse sampling with optional Classifier-Free Guidance."""
     def __init__(self, schedule: DiffusionSchedule):
         self.schedule = schedule
 
     @torch.no_grad()
-    def generate(self, model, text_embeds, null_context, w=3.0, shape=(4, 16, 16)):
-        device = text_embeds.device
-        b = text_embeds.shape[0]
-        img_shape = (b, *shape)
-        img = torch.randn(img_shape, device=device)
+    def generate(self, model, text_emb, null_embedding, guidance_scale=4.0, latent_mean=None, latent_std=None, vae_decoder=None):
+        device = text_emb.device
+        b = text_emb.shape[0]
         
-        context = torch.cat([text_embeds, null_context.repeat(b, 1, 1)])
+        # Null context
+        null_ctx = null_embedding.expand(b, -1, -1)
         
-        for i in reversed(range(0, self.schedule.timesteps)):
-            t = torch.full((b,), i, device=device, dtype=torch.long)
-            t_double = torch.cat([t, t])
+        # Start from pure noise
+        z = torch.randn(b, 4, 16, 16, device=device)
+        
+        # DDPM sampling with CFG
+        for t in reversed(range(self.schedule.timesteps)):
+            t_tensor = torch.full((b,), t, device=device, dtype=torch.long)
             
-            latent_double = torch.cat([img, img])
-            pred_noise_double = model(latent_double, t_double, context)
+            # Predict noise with text context
+            pred_text = model(z, t_tensor, text_emb)
+            # Predict noise with null context
+            pred_null = model(z, t_tensor, null_ctx)
+            # Apply CFG
+            pred = (1 + guidance_scale) * pred_text - guidance_scale * pred_null
             
-            pred_noise_cond, pred_noise_uncond = pred_noise_double.chunk(2)
-            pred_noise = pred_noise_uncond + w * (pred_noise_cond - pred_noise_uncond)
+            alpha_t = self.schedule.alphas[t]
+            alpha_cumprod_t = self.schedule.alphas_cumprod[t]
+            beta_t = self.schedule.betas[t]
             
-            alpha = self.schedule.alphas[t][:, None, None, None]
-            alpha_hat = self.schedule.alphas_cumprod[t][:, None, None, None]
-            beta = self.schedule.betas[t][:, None, None, None]
-            
-            if i > 0:
-                noise = torch.randn_like(img)
-            else:
-                noise = 0.0
-                
-            img = 1 / torch.sqrt(alpha) * (img - ((1 - alpha) / (torch.sqrt(1 - alpha_hat))) * pred_noise) + torch.sqrt(beta) * noise
-            
-        return img
+            noise = torch.randn_like(z) if t > 0 else 0
+            z = 1 / torch.sqrt(alpha_t) * (z - (1 - alpha_t) / torch.sqrt(1 - alpha_cumprod_t) * pred) + torch.sqrt(beta_t) * noise
+        
+        if vae_decoder is not None and latent_mean is not None and latent_std is not None:
+            # Denormalize and decode
+            z = z * latent_std.to(device) + latent_mean.to(device)
+            img = vae_decoder(z)
+            img = (img + 1) / 2
+            return torch.clamp(img, 0, 1)
+        
+        return z
+
