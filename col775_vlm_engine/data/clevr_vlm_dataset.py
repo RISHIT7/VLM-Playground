@@ -50,85 +50,115 @@ class CLEVRQADataset(Dataset):
         """
         API Description:
         Dataset for Stage-2: Visual Instruction Tuning.
-        Loads QA pairs from Part_Aa/Clevr_official/questions/CLEVR_{split}_questions.json[cite: 314].
-        
-        CRITICAL: Must extract the 'program' field to form the Chain-of-Thought (CoT) 
-        factual explanation before appending the final answer[cite: 313, 314].
+        Loads QA pairs from Part_Aa/Clevr_official/questions/CLEVR_{split}_questions.json.
+
+        CRITICAL: Must extract the 'program' field to form the Chain-of-Thought (CoT)
+        factual explanation before appending the final answer.
         """
         self.config = config
         self.split = split
         self.transform = transform
         self.tokenizer = tokenizer
-        
         self.base_dir = self.config.data_root
-        self.json_path = os.path.join(self.base_dir, "Part_Aa", "Clevr_official", "questions", f"CLEVR_{split}_questions.json")
+        self.questions_path = os.path.join(
+            self.base_dir,
+            "Part_Aa",
+            "Clevr_official",
+            "questions",
+            f"CLEVR_{split}_questions.json",
+        )
         self.image_dir = os.path.join(self.base_dir, "Part_Aa", "Clevr_official", "images", split)
-        
-        with open(self.json_path, "r") as f:
-            self.data = json.load(f)["questions"]
+
+        with open(self.questions_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+
+        self.data = payload["questions"] if isinstance(payload, dict) and "questions" in payload else payload
+
+    @staticmethod
+    def _format_program_step(step: Dict[str, Any]) -> str:
+        function = str(step.get("function", "unknown"))
+        value_inputs = step.get("value_inputs", []) or []
+
+        if function == "scene":
+            return "inspect the full scene"
+        if function == "filter_color" and value_inputs:
+            return f"keep objects that are {value_inputs[0]}"
+        if function == "filter_size" and value_inputs:
+            return f"keep objects that are {value_inputs[0]}"
+        if function == "filter_material" and value_inputs:
+            return f"keep objects made of {value_inputs[0]}"
+        if function == "filter_shape" and value_inputs:
+            return f"keep objects shaped like {value_inputs[0]}"
+        if function == "relate" and value_inputs:
+            return f"look for objects {value_inputs[0]} of the current object"
+        if function == "unique":
+            return "select the unique object from the current set"
+        if function == "count":
+            return "count how many objects remain"
+        if function == "exist":
+            return "check whether any object remains"
+        if function == "query_color":
+            return "query the color of the selected object"
+        if function == "query_size":
+            return "query the size of the selected object"
+        if function == "query_material":
+            return "query the material of the selected object"
+        if function == "query_shape":
+            return "query the shape of the selected object"
+        if function == "same_color":
+            return "find other objects with the same color"
+        if function == "same_size":
+            return "find other objects with the same size"
+        if function == "same_material":
+            return "find other objects with the same material"
+        if function == "same_shape":
+            return "find other objects with the same shape"
+        if function.startswith("equal_") or function.startswith("less_than") or function.startswith("greater_than"):
+            return f"compare values using {function.replace('_', ' ')}"
+
+        if value_inputs:
+            values = ", ".join(map(str, value_inputs))
+            return f"apply {function.replace('_', ' ')} with {values}"
+        return f"apply {function.replace('_', ' ')}"
+
+    @classmethod
+    def _program_to_explanation(cls, program: List[Dict[str, Any]]) -> str:
+        if not program:
+            return "The question is answered directly from the visual evidence."
+
+        steps = [f"Step {idx}: {cls._format_program_step(step)}." for idx, step in enumerate(program, start=1)]
+        return " ".join(steps)
 
     def __len__(self) -> int:
         return len(self.data)
 
-    def _program_to_cot(self, program: List[Dict[str, Any]]) -> str:
-        """Converts CLEVR program sequence into a natural language reasoning chain."""
-        steps = []
-        for step in program:
-            func = step['function']
-            val = step.get('value_inputs', [])
-            if func == 'scene': steps.append("Analyze the scene.")
-            elif func.startswith('filter_'): steps.append(f"Filter by {func.split('_')[1]} {val[0] if val else ''}.")
-            elif func == 'unique': steps.append("Select the unique object.")
-            elif func == 'same_shape': steps.append("Find objects of the same shape.")
-            elif func == 'exist': steps.append("Check if it exists.")
-            elif func == 'count': steps.append("Count the objects.")
-            elif func.startswith('query_'): steps.append(f"Query the {func.split('_')[1]}.")
-            elif func == 'relate': steps.append(f"Find objects {val[0] if val else ''} the current object.")
-            elif func == 'intersect': steps.append("Find the intersection of these sets.")
-            elif func == 'union': steps.append("Find the union of these sets.")
-            elif func.startswith('equal_'): steps.append(f"Check if their {func.split('_')[1]}s are equal.")
-            elif func == 'greater_than': steps.append("Check if the first is greater than the second.")
-            elif func == 'less_than': steps.append("Check if the first is less than the second.")
-            else: steps.append(f"Apply {func}.")
-        return " ".join(steps)
-
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        """
-        API Description:
-        Fetches the image, formats the prompt, and formats the target (CoT + Answer).
-        
-        Returns: {
-            "image": Tensor (3, 224, 224),
-            "prompt_text": str (The question),
-            "explanation": str (The CoT reasoning),
-            "target_text": str (The answer)
-        }
-        """
         item = self.data[idx]
         image_path = os.path.join(self.image_dir, item["image_filename"])
         image = Image.open(image_path).convert("RGB")
-        
+
         if self.transform:
             image = self.transform(image)
         else:
             from torchvision import transforms
+
             fallback_transform = transforms.Compose([
                 transforms.Resize((224, 224)),
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ])
             image = fallback_transform(image)
-            
-        explanation = item.get("factual_explanation", item.get("explanation", None))
-        if not explanation and "program" in item:
-            explanation = self._program_to_cot(item["program"])
-            
+
+        question = item.get("question", "")
+        answer = item.get("answer", "")
+        explanation = self._program_to_explanation(item.get("program", []))
+
         return {
             "image": image,
-            "prompt_text": item["question"],
+            "prompt_text": question,
+            "target_text": answer,
             "explanation": explanation,
-            "target_text": str(item["answer"]),
-            "image_filename": item["image_filename"]
+            "image_filename": item.get("image_filename", ""),
         }
 
 class VLMCollateFn:
