@@ -21,14 +21,19 @@ class CLEVRDataset(Dataset):
         self.transform = transform
         self.tokenizer = tokenizer
 
-        if mode in ["clip", "dino"]:
-            base_dir = config.base_dir_part_a
+        if mode in ["clip", "dino", "vae", "ldm"]:
+            base_dir = getattr(config, 'base_dir_part_c', config.base_dir_part_a) if mode in ["vae", "ldm"] else config.base_dir_part_a
             self.image_dir = os.path.join(base_dir, split, "images")
             json_path = os.path.join(base_dir, split, f"clevr_{split}_captions.json")
             with open(json_path, 'r') as f:
                 self.annotations = json.load(f)
             if isinstance(self.annotations, dict) and "examples" in self.annotations:
                 self.annotations = self.annotations["examples"]
+            
+            # For LDM, we might load precomputed latents and text embeddings
+            if mode == "ldm":
+                self.latent_dir = getattr(config, 'latent_dir', os.path.join(base_dir, split, "latents"))
+                self.embed_dir = getattr(config, 'embed_dir', os.path.join(base_dir, split, "embeds"))
         else:
             base_dir = config.base_dir_part_aa
             self.image_dir = os.path.join(base_dir, "Clevr_official", "images", split)
@@ -54,6 +59,20 @@ class CLEVRDataset(Dataset):
         ann = self.annotations[idx]
         img_filename = ann.get("image_filename", ann.get("image", ann.get("filename", "")))
         img_path = os.path.join(self.image_dir, img_filename)
+
+        if self.mode == "ldm":
+            # Load precomputed tensors
+            latent_path = os.path.join(self.latent_dir, img_filename.replace('.png', '.pt').replace('.jpg', '.pt'))
+            embed_path = os.path.join(self.embed_dir, img_filename.replace('.png', '.pt').replace('.jpg', '.pt'))
+            
+            latent = torch.load(latent_path) if os.path.exists(latent_path) else torch.zeros((4, 16, 16))
+            text_embed = torch.load(embed_path) if os.path.exists(embed_path) else torch.zeros((77, 512))
+            
+            return {
+                "latent": latent,
+                "text_embed": text_embed
+            }
+
         image = Image.open(img_path).convert("RGB")
 
         if self.mode == "clip":
@@ -76,6 +95,9 @@ class CLEVRDataset(Dataset):
                 "count_label": self.counts[idx],
                 "color_label": self.color_sets[idx]
             }
+        elif self.mode == "vae":
+            img_tensor = self.transform(image)
+            return {"image": img_tensor}
 
 class CLEVRCollateFn:
     def __init__(self, mode: str):
@@ -110,6 +132,16 @@ class CLEVRCollateFn:
                 "images": images,
                 "count_labels": count_labels,
                 "color_labels": color_labels
+            }
+        elif self.mode == "vae":
+            images = torch.stack([b["image"] for b in batch])
+            return {"image": images}
+        elif self.mode == "ldm":
+            latents = torch.stack([b["latent"] for b in batch])
+            text_embeds = torch.stack([b["text_embed"] for b in batch])
+            return {
+                "latent": latents,
+                "text_embed": text_embeds
             }
         else:
             raise ValueError(f"Unknown mode: {self.mode}")

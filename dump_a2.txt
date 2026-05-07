@@ -1,0 +1,189 @@
+Assignment 2
+COL775: Deep Learning
+Semester II, 2025–2026
+Due Date: May 7, 2026
+Notes:
+•You should usePython=3.10andPytorch=2.5.0+cu11.8for all your programming solutions.
+•You should submit all your code as well as any graphs that you might plot. Submit all the code in .py
+files and all answers to theory questions; all graphs should be submitted in a PDF. Do not submit any
+thoery in the code files. Do not submit the datasets.
+•Include asingle write-up (pdf) filewhich includes a brief description for each question explaining
+what you did. Include any observations and/or plots required by the question in this single write-up
+file.
+•Your code should have appropriate documentation for readability. Demo will also be conducted in
+which you will have to explain your code. You will be graded based on what you have submitted as
+well as your ability to explain your code.
+•The readability and presentation in your report will also carry marks. While there is no specific format,
+you are advised to be clear, concise and complete in your answers with explanations wherever required.
+•A substantial portion of your marks will be based on the accuracy achieved, so ensure that your models
+are trained thoroughly and properly.
+•Your assignment will be run on autograder scripts. Detailed instructions regarding this and submission
+guidelines of code will follow soon. Till then, please start working on writing the functions for your
+code.
+•This assignment can be done in groups of 2 or 3 students. Use this google form to fill out
+your team details
+•Refer to the course website for assignment submission instructions.
+•We plan to run Moss on the submissions. We will also include submissions from previous years since
+some of the questions may be repeated. Any cheating will result in a zero on the assignment, an
+additional penalty upto the negative of the total weightage of the assignment and possibly much
+stricter penalties (including afail gradeand/or referring to aDisCo). Please note that using any
+AI tools is not allowed.
+1
+Overview
+In this assignment you’ll build a comprehensive understanding of modern representation learning by explor-
+ing three complementary paradigms: weakly-supervised contrastive learning, self-supervised learning and
+generative modelling. All experiments will be conducted on a version of CLEVR dataset [3], along with
+programatically generated captions. Data is available here.
+In the first part (A/Aa), you’ll implement from scratch two influential works in this space : CLIP [5] and
+DINO [1]. CLIP leverages weak supervision through image-text contrastive learning, while DINO relies on
+self-supervised knowledge distillation to learn visual features without labels. You will train both models
+and analyze the learned representation through linear probing on downstream tasks such as object counting,
+color/shape prediction etc.
+In the second part (B), you will extend these learned visual representations to build a general purpose vision-
+language model (VLM). This involves integrating a pre-trained language model with the vision encoder and
+aligning the two modalities in a two-stage training pipeline inspired by LLaVA [4]. By freezing the vision
+encoder and training a projection interface, you will study how effectively the learned representations sup-
+port language grounding and reasoning on CLEVR.
+In part (C), you will implement a Variational Auto-Encoder (VAE) to learn a dense latent-representation
+on this dataset. Using which you’ll train a text-guided Latent Diffusion Model (LDM) to generate diverse
+CLEVR scene from any given caption.
+1 (A) Representation Learning
+In this section, you will implement and train two separate models. Your goal is to learn a high-dimensional
+embedding space where images with similar semantic concepts (e.g., object counts, colors, shapes) are clus-
+tered together, without using explicit classification labels. Only use the data insidePart Adirectory for this
+part.
+1.1 Contrastive Language-Image Pre-training (CLIP)
+You will implement a weakly-supervised model inspired by CLIP. You will use the programmatically gen-
+erated captions provided in the datasets to align image and text modalities. We only provide some basic
+hyper-parameter details, however you should read the paper carefully to understand other detailed nuances.
+Figure 1: CLIP framework, Source: [5]
+2
+As shown in 1, the model consists of an image encoder, a text encoder, and a shared embedding space
+in which aligned image–text pairs are brought close together using a contrastive objective.
+Overall model:Given an imageIand its captionT, the model produces an image embeddingv∈R d
+and a text embeddingt∈R d. Both embeddings areℓ 2-normalized and compared using temperature-scaled
+cosine similarity. The temperature is a learnable parameter and is initialized to log(1/0.07), following the
+details described in the CLIP paper [5]
+Vision Transformer image encoder:The visual pipeline should follows the standard ViT design [2].
+The image encoder is a Vision Transformer consisting of 12 transformer layers, 6 attention heads per layer,
+hidden dimension 384 and MLP dimension 1536. In the experiments use the patch size of 16 and the input
+image resolution is fixed at 224×224. You must project your final output into a 512 dimensional shared
+space. Each transformer layer can be implemented via Pytorch abstractions likenn.MultiheadAttention,
+nn.Linearetc. Use of fully abstracted Transformer and TransformerLayer is not allowed.
+Text encoder:The text branch is a lightweight transformer. It should be implemented with 6 transformer
+layers, 6 attention heads, 384 hidden dimension and 1536 MLP dimension. Refer to [6] for details. After
+the transformer stack, the representation of the final non-padding token (effectively the end-of-text token)
+should be projected into the joint embedding space( 512 dimensional ).
+Tokenizer and Caption representation:Instead of using a pretrained tokenizer, You should construct
+a simple task-specific tokenizer directly from the training captions. You can choose a fixed context length
+for training the model. Each caption is formed directly from the scene graph and encodes object count and
+attributes such as size, color, material, and shape. A typical caption has the form:
+An image with 3 objects: 1 small red metal cube, 2 large blue rubber spheres
+Since, no spatial information is used in the captions, therefore many different images can share the same
+caption. If several identical captions appear in one contrastive batch, the learning signal becomes less clean.
+You must take this into account while constructing your batches.
+Objective Function and OptimizationTraining uses the standard symmetric CLIP objective described
+in the paper. You can follow these parameters as default, however feel free to experiment on the best setting
+that works for you (You can refer to the paper for additional values of hyper-params): Optimizer=AdamW,
+learning rate= 5×10 −4, weight decay= 0.2,β 1 = 0.9,β 2 = 0.98,ϵ= 10 −6, epochs: 100, LR Scheduler:
+Cosine Decay with Linear warmup.
+1.2 Self-Supervised Distillation - DINO
+You will implement a self-supervised model inspired by DINO. Unlike CLIP, this model does not use text at
+all. It learns visual representations by enforcing consistency between different augmented views of the same
+image. Similar to CLIP, we only provide basic hyper-parameter details, you should carefully read the [1]
+for detailed instructions.
+Overall framework:The model consists of two networks with identical architecture:
+•astudentnetwork, which is updated by gradient descent,
+•ateachernetwork, not updated by backpropagation; instead, its parameters are updated as an expo-
+nential moving average of the student parameters.
+Both the Teacher and Student models must use the same Vision Transformer backbone as used in CLIP
+(12 layers, 6 heads and 384 hidden dimension). On top of the ViT backbone, both models use a projection
+head of 4096 dimension which maps the backbone feature into the space used for self-distillation. (Note that
+this is different from the paper which uses a 65536 dimensional feature space). Feel free to figure out what
+works best here as well.
+3
+Multi-crop data augmentation:A central component of DINO is the augmentation pipeline. For each
+image, the transform produces: (1) twoglobal cropsof size 224×224, (2) severallocal cropsof size 96×96.
+You can use the default number of local crops as 8, so each image yields 10 views in total. Refer to the paper
+for more details on the different augmentation strategies applicable.
+Teacher–student training rule:During training, the student receives all augmented views and the
+teacher receives only the two global views. The teacher is not updated by backpropagation. Instead, its
+parameters are updated as an exponential moving average of the student parameters as specified in the
+paper. The objective function is cross-entropy between the teacher probability distribution for one global
+crop and the student prediction for every other crop of the same image, excluding the matching same-view
+pair. The final loss averages this over all valid teacher–student crop pairs. Refer to Equation 3 in [1].
+Centering mechanism.A key stabilization component is the runningcenterwhich is an exponential
+moving average of the teacher outputs across batches. Before applying softmax to the teacher outputs,
+the current center is subtracted. Refer to Equation 4 and Algorithm 1 in [1]. This prevents the teacher
+distribution from becoming too peaky and helps avoid representation collapse.
+Optimization.Training is performed only on the student network. The optimizer to be used is AdamW
+with same default hyper-parameters as CLIP. You’re free to ablate your hyper-parameter choices.
+2 (Aa) Representation Analysis
+Once training is complete, you willfreeze the weightsof all Vision Encoders (from both CLIP and DINO).
+The goal of this section is to rigorously evaluate whether the learned representations capture meaningful
+semantic concepts such as object count, color composition, and shape composition.
+You will perform bothquantitativeandqualitativeanalyses to probe the structure and utility of the
+learned embedding space. Only use the data insidePart Aadirectory for this part.
+2.1 Linear Probing
+Linear probing is a standard protocol for evaluating representation quality by measuring how easily down-
+stream tasks can be solved using a simple linear classifier on frozen features. We’ll use two tasks, (1) Object
+Count Prediction and (2) Color Set Prediction, you’ll find the corresponding .json files and images in the
+dataset. Extract the fixed-dimensional image embeddings from the frozen Vision-Encoders and train a single
+linear layer classifier (no hidden layers or activation) on top of them.
+•Use appropriate loss functions i.e Cross-Entropy for Counting task and Binary-Cross Entropy (multi-
+label) for shape prediction task.
+•Ensure that only linear classifier’s weights are updated during training.
+•Report the classification accuracy for Counting Task and F1 score for Color-Prediction Task, specifically
+fill the values in Table 1.
+•Provide brief analysis discussing:
+–Describe you results, which model performs better on which tasks?
+–Which model encodes semantic attributes most effectively?
+4
+Model
+[CLS] Embedding GAP over Patches
+Counting Color Pred. Counting Color Pred.
+Train Val Train Val Train Val Train Val
+CLIP
+DINO Student
+DINO Teacher
+Table 1: Representation analysis across models and embedding strategies. GAP refers to Global-Average-
+Pooling operation, which averages the output embeddings of allNimage patches (excluding [CLS] token),
+resulting in a singleD-dimensional vector.
+2.2 t-SNE Visualization
+To complement quantitative evaluation, you will perform a qualitative analysis of the embedding space using
+t-SNE(t-distributed Stochastic Neighbor Embedding). Use the extracted embeddings of training set (70K
+images) and project them into a 2D space. Generate scatter plots for CLIP and both DINO models (Student
+and Teacher), color coding each point based on the object count in the image to visualize the global structure.
+Analyze and comment your observations.
+2.3 Cross-Modal Retrieval using CLIP
+To further evaluate the semantic consistency of the learned representations in CLIP, you will perform an
+retrievaltask based on nearest neighbors in the embedding space.
+For each image in thevalidationsplit, compute its embedding and retrieve the embedded captions from
+a pool consisting of all validation captions. Both image and text embeddings are L2-normalized, and simi-
+larity is computed using cosine similarity. ReportRecall@K (R@1, R@3), which measures whether the
+ground-truth caption is among the top-K retrieved results. Additionally evaluate text→image retrieval by
+using each caption as a query and retrieving images from the validation set. Report thesame (R@1 and
+R@3)metrics.
+Show a few queries alongside their top retrieved neighbors for both (Image→Text and Text→Image retrieval).
+Comment on success and failure cases for both.
+Submission Guidelines:
+Please submit your fully documented code, the trained model weights, and a final PDF report containing
+your plots, metric tables, and a brief discussion comparing the two paradigms. Detailed guidelines will be
+released later.
+Parts (B) and (C) coming soon
+5
+References
+[1] Mathilde Caron, Hugo Touvron, Ishan Misra, Herv´ e J´ egou, Julien Mairal, Piotr Bojanowski, and Armand
+Joulin. Emerging properties in self-supervised vision transformers, 2021.
+[2] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas Un-
+terthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and
+Neil Houlsby. An image is worth 16x16 words: Transformers for image recognition at scale, 2021.
+[3] Justin Johnson, Bharath Hariharan, Laurens van der Maaten, Li Fei-Fei, C. Lawrence Zitnick, and Ross
+Girshick. Clevr: A diagnostic dataset for compositional language and elementary visual reasoning, 2016.
+[4] Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. Visual instruction tuning, 2023.
+[5] Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish
+Sastry, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. Learning
+transferable visual models from natural language supervision, 2021.
+[6] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz
+Kaiser, and Illia Polosukhin. Attention is all you need, 2023.
+6
